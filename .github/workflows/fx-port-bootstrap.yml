@@ -1,0 +1,87 @@
+name: Temporary fx full-port bootstrap
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/fx-port-bootstrap.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Clone pinned upstream
+        run: |
+          set -euo pipefail
+          git clone https://github.com/vercel-labs/fx.git upstream
+          cd upstream
+          git checkout 2b07cf20c3450d9386f79aaf1cadaa16edba7134
+          test "$(git rev-parse HEAD)" = "2b07cf20c3450d9386f79aaf1cadaa16edba7134"
+
+      - name: Build and test pinned upstream
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          zig fmt --check src/
+          zig build -Doptimize=ReleaseSafe
+          timeout 900s zig build test -Doptimize=ReleaseSafe
+          ./zig-out/bin/fx --version
+
+      - name: Package upstream reference binary
+        run: |
+          set -euo pipefail
+          mkdir -p bootstrap/upstream-reference
+          cp upstream/zig-out/bin/fx bootstrap/upstream-reference/fx-zig-reference
+          cp upstream/LICENSE upstream/THIRD_PARTY_NOTICES.md bootstrap/upstream-reference/
+          printf '%s\n' 2b07cf20c3450d9386f79aaf1cadaa16edba7134 > bootstrap/upstream-reference/UPSTREAM_COMMIT
+          tar -C bootstrap -czf fx-zig-reference-linux-x86_64.tar.gz upstream-reference
+
+      - name: Package Rust toolchain
+        run: |
+          set -euo pipefail
+          rustc --version --verbose | tee RUSTC_VERSION.txt
+          cargo --version --verbose | tee CARGO_VERSION.txt
+          SYSROOT="$(rustc --print sysroot)"
+          TOOLCHAIN_NAME="$(basename "$SYSROOT")"
+          tar -C "$(dirname "$SYSROOT")" -czf rust-toolchain-linux-x86_64.tar.gz "$TOOLCHAIN_NAME"
+          printf '%s\n' "$TOOLCHAIN_NAME" > RUST_TOOLCHAIN_NAME.txt
+
+      - name: Package Bun binary
+        run: |
+          set -euo pipefail
+          BUN_PATH="$(command -v bun)"
+          cp "$BUN_PATH" bun-linux-x86_64
+          chmod +x bun-linux-x86_64
+          bun --version > BUN_VERSION.txt
+
+      - name: Generate checksums
+        run: sha256sum fx-zig-reference-linux-x86_64.tar.gz rust-toolchain-linux-x86_64.tar.gz bun-linux-x86_64 > SHA256SUMS
+
+      - name: Upload bootstrap artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fx-port-bootstrap
+          path: |
+            fx-zig-reference-linux-x86_64.tar.gz
+            rust-toolchain-linux-x86_64.tar.gz
+            bun-linux-x86_64
+            RUST_TOOLCHAIN_NAME.txt
+            RUSTC_VERSION.txt
+            CARGO_VERSION.txt
+            BUN_VERSION.txt
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 3
