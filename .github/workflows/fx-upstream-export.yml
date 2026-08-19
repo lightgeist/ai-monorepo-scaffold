@@ -1,0 +1,37 @@
+name: Temporary fx upstream export
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/fx-upstream-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone and inventory upstream
+        run: |
+          set -euo pipefail
+          git clone https://github.com/vercel-labs/fx.git upstream
+          cd upstream
+          git rev-parse HEAD | tee ../UPSTREAM_COMMIT
+          git ls-files | sort > ../UPSTREAM_FILES.txt
+          git ls-files -z | xargs -0 wc -l > ../UPSTREAM_LINE_COUNTS.txt
+          git ls-files -z | xargs -0 sha256sum > ../UPSTREAM_SHA256SUMS.txt
+          cd ..
+          tar --exclude='.git' -czf fx-upstream-source.tar.gz upstream
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: fx-upstream-source
+          path: |
+            fx-upstream-source.tar.gz
+            UPSTREAM_COMMIT
+            UPSTREAM_FILES.txt
+            UPSTREAM_LINE_COUNTS.txt
+            UPSTREAM_SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 3
