@@ -1,0 +1,89 @@
+name: Temporary fx Rust dependency vendor
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/fx-rust-vendor.yml
+
+permissions:
+  contents: read
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Create dependency envelope
+        run: |
+          set -euo pipefail
+          mkdir -p seed/src .cargo
+          cat > seed/Cargo.toml <<'TOML'
+          [package]
+          name = "fx-rust-dependency-envelope"
+          version = "0.0.0"
+          edition = "2024"
+          publish = false
+
+          [dependencies]
+          anyhow = "1"
+          async-trait = "0.1"
+          base64 = "0.22"
+          bytes = "1"
+          chrono = { version = "0.4", features = ["serde"] }
+          clap = { version = "4", features = ["derive"] }
+          crossterm = "0.29"
+          directories = "6"
+          futures = "0.3"
+          globset = "0.4"
+          hex = "0.4"
+          ignore = "0.4"
+          indexmap = { version = "2", features = ["serde"] }
+          libc = "0.2"
+          memchr = "2"
+          notify = "8"
+          once_cell = "1"
+          regex = "1"
+          reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+          serde = { version = "1", features = ["derive"] }
+          serde_json = "1"
+          sha2 = "0.10"
+          similar = "2"
+          smallvec = { version = "1", features = ["serde"] }
+          tempfile = "3"
+          thiserror = "2"
+          tokio = { version = "1", features = ["full"] }
+          toml = "0.9"
+          unicode-segmentation = "1"
+          unicode-width = "0.2"
+          url = { version = "2", features = ["serde"] }
+          uuid = { version = "1", features = ["v4", "serde"] }
+          walkdir = "2"
+          zeroize = { version = "1", features = ["derive"] }
+          zstd = "0.13"
+          TOML
+          printf 'fn main() {}\n' > seed/src/main.rs
+
+      - name: Resolve and vendor
+        working-directory: seed
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+          cargo vendor --locked ../vendor > ../vendor-config.toml
+          cargo metadata --locked --format-version 1 > ../dependency-metadata.json
+
+      - name: Package and checksum
+        run: |
+          set -euo pipefail
+          tar -czf fx-rust-vendor.tar.gz vendor vendor-config.toml seed/Cargo.lock dependency-metadata.json
+          sha256sum fx-rust-vendor.tar.gz > SHA256SUMS.vendor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fx-rust-vendor
+          path: |
+            fx-rust-vendor.tar.gz
+            SHA256SUMS.vendor
+          if-no-files-found: error
+          retention-days: 3
