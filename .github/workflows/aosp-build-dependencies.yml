@@ -1,0 +1,34 @@
+name: AOSP build dependencies
+on:
+  push:
+    branches: [build/public-dependencies-20260905]
+    paths: [.github/workflows/aosp-build-dependencies.yml]
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Collect AOSP build components
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$ANDROID_HOME"
+          BT="$SDK/build-tools/35.0.0"
+          mkdir -p out/sdk/build-tools/35.0.0/lib out/sdk/build-tools/35.0.0/lib64 out/sdk/platforms/android-35 out/sdk/platform-tools
+          cp "$SDK/platforms/android-35/android.jar" out/sdk/platforms/android-35/
+          for f in aapt aapt2 zipalign apksigner d8 dexdump NOTICE.txt source.properties; do test ! -f "$BT/$f" || cp "$BT/$f" out/sdk/build-tools/35.0.0/; done
+          cp "$BT/lib/apksigner.jar" "$BT/lib/d8.jar" out/sdk/build-tools/35.0.0/lib/
+          cp "$BT/lib64/"*.so out/sdk/build-tools/35.0.0/lib64/ || true
+          cp "$SDK/platform-tools/adb" out/sdk/platform-tools/
+          for f in NOTICE.txt source.properties; do test ! -f "$SDK/platform-tools/$f" || cp "$SDK/platform-tools/$f" out/sdk/platform-tools/; done
+          for f in NOTICE.txt source.properties; do test ! -f "$SDK/platforms/android-35/$f" || cp "$SDK/platforms/android-35/$f" out/sdk/platforms/android-35/; done
+          printf '%s\n' 'AOSP build components from the GitHub-hosted runner Android installation. Component notices included. No product source, assets, credentials, signing keys, Google APIs add-ons, or device data.' > out/README.txt
+          (cd out && find . -type f -not -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aosp-build-dependencies
+          path: out/
+          retention-days: 1
+          compression-level: 9
