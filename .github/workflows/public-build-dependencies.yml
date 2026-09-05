@@ -1,0 +1,30 @@
+name: Public build dependencies
+on:
+  push:
+    branches: [build/public-dependencies-20260905]
+    paths: [.github/workflows/public-build-dependencies.yml]
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download public dependencies only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/web out/java
+          cd out/web
+          npm init -y >/dev/null
+          npm install --save-exact pixi.js@8.13.1 vite@6.1.0 typescript@5.7.3 @types/node@22.10.5
+          cd ../..
+          curl -fL --retry 2 https://dl.google.com/dl/android/maven2/com/android/tools/build/apksig/8.7.3/apksig-8.7.3.jar -o out/java/apksig.jar
+          printf '%s\n' 'Only public dependencies. No application source, private assets, SDK, credentials, or signing keys are exported.' > out/README.txt
+          (cd out && find . -type f -not -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-build-dependencies
+          path: out/
+          retention-days: 1
+          compression-level: 9
