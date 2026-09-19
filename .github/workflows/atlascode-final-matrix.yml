@@ -1,0 +1,125 @@
+name: AtlasCode final release matrix
+on:
+  push:
+    branches: ['atlascode/baseline-20260919']
+    paths: ['.github/workflows/atlascode-final-matrix.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 7
+    permissions:
+      contents: write
+    outputs:
+      revision: ${{ steps.publish.outputs.revision }}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - name: Acquire exact final snapshot
+        env:
+          SOURCE_URL: 'https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-19d0-8211-b9e1-781482872596/raw?se=2026-09-19T02%3A46%3A47Z&sp=r&sv=2026-02-06&sr=b&scid=44722232-c395-5376-ba45-9ac0da749447&skoid=37f774a3-b6f2-4e56-9fdd-339e5d6e97f8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-18T20%3A13%3A32Z&ske=2026-09-19T20%3A13%3A32Z&sks=b&skv=2026-02-06&sig=hsu3lhpsymxv9RbCTetBV0/C4DUi9%2B40pzsX2HxXxIY%3D'
+        run: |
+          curl --fail --location --retry 2 "$SOURCE_URL" -o source.zip
+          echo '1545fca68d6323363987d18327989798b5b1f06a2ec912407a988a8efde0c81c  source.zip' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,os
+          root=Path('exact-source').resolve(); root.mkdir()
+          with zipfile.ZipFile('source.zip') as z:
+            for e in z.infolist():
+              dest=(root/e.filename).resolve()
+              assert dest.is_relative_to(root),e.filename
+              z.extract(e,root)
+              if e.external_attr>>16: os.chmod(dest,(e.external_attr>>16)&0o777)
+          PY
+          node exact-source/scripts/check-brand.mjs
+      - name: Publish source with unchanged authorized workflows
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git clone --depth 1 --branch atlascode/v0.1.0 https://github.com/lightgeist/ai-monorepo-scaffold.git published-source
+          diff -qr exact-source/.github/workflows published-source/.github/workflows
+          rsync -a --exclude=.git exact-source/ published-source/
+          cd published-source
+          git config user.name 'AtlasCode Release Automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .
+          if ! git diff --cached --quiet; then git commit -qm 'fix(atlascode): retain exact upstream support guard and audited identity contracts'; fi
+          git push origin HEAD:refs/heads/atlascode/v0.1.0
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  qualify:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.prepare.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - name: Frozen install in isolated source root
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/qualification"
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          pnpm install --frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/qualification/install.log"
+      - name: Build and package
+        shell: bash
+        run: |
+          pnpm build 2>&1 | tee "$RUNNER_TEMP/qualification/build.log"
+          node scripts/package-atlascode.mjs "$RUNNER_TEMP/distribution" 2>&1 | tee "$RUNNER_TEMP/qualification/package.log"
+      - name: Run applicable regression gates
+        shell: bash
+        env:
+          OS_KIND: ${{ runner.os }}
+        run: |
+          set +e
+          failed=0
+          tasks='typecheck check:source check:tsconfig check:standalone check:brand test:smoke test:byok test:policy test:sandbox test:status-contract test:artifact test:release-tools'
+          if [ "$OS_KIND" = Linux ]; then tasks="$tasks test:capabilities"; fi
+          for task in $tasks; do
+            logfile="${task//:/-}"
+            pnpm "$task" > "$RUNNER_TEMP/qualification/${logfile}.log" 2>&1
+            code=$?
+            printf '%s\n' "$code" > "$RUNNER_TEMP/qualification/${logfile}.exit"
+            printf '%s exit=%s\n' "$task" "$code"
+            if [ "$code" != 0 ]; then failed=1; tail -n 30 "$RUNNER_TEMP/qualification/${logfile}.log"; fi
+          done
+          exit "$failed"
+      - name: Clean prefix install from actual artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/atlascode-clean-prefix"
+          home="$RUNNER_TEMP/atlascode-clean-home"
+          mkdir -p "$prefix" "$home" "$RUNNER_TEMP/atlascode-clean-project"
+          npm install --global --prefix "$prefix" "$RUNNER_TEMP/distribution/deepintuition-atlascode-0.1.0.tgz" 2>&1 | tee "$RUNNER_TEMP/qualification/clean-install.log"
+          export HOME="$home"
+          export ATLASCODE_DATA_DIR="$home/.atlascode"
+          if [ "$RUNNER_OS" = Windows ]; then export PATH="$prefix:$PATH"; else export PATH="$prefix/bin:$PATH"; fi
+          cd "$RUNNER_TEMP/atlascode-clean-project"
+          atlascode --version | tee "$RUNNER_TEMP/qualification/installed-version.txt"
+          atlascode --help | tee "$RUNNER_TEMP/qualification/installed-help.txt"
+          test "$(atlascode --version)" = '0.1.0'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-final-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/qualification/
+            ${{ runner.temp }}/distribution/deepintuition-atlascode-0.1.0.tgz
+            ${{ runner.temp }}/distribution/npm-pack.json
+          retention-days: 7
