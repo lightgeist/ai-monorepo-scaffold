@@ -440,7 +440,7 @@ test('issue notification is restricted to public destination events and builds p
   assert.deepEqual(workflow.on, { issues: { types: ['opened'] } });
   assert.deepEqual(workflow.permissions, { contents: 'read', issues: 'read' });
   const job = workflow.jobs['notify-feishu'];
-  assert.equal(job.if, "${{ github.repository == 'MiniMax-AI/atlascode' && github.event.repository.private == false && !github.event.issue.pull_request }}");
+  assert.equal(job.if, "${{ github.repository == 'MiniMax-AI/minimax-code' && github.event.repository.private == false && !github.event.issue.pull_request }}");
   const generate = job.steps.find(step => step.name === 'Build Feishu payload').run;
   // Execute only the payload builder, never the delivery step or its secrets.
   assert.doesNotMatch(generate, /\$\{\{\s*github\.event/);
@@ -450,7 +450,7 @@ test('issue notification is restricted to public destination events and builds p
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const marker = path.join(directory, 'must-not-execute');
   const event = {
-    repository: { full_name: 'MiniMax-AI/atlascode', html_url: 'https://github.com/MiniMax-AI/minimax-code' },
+    repository: { full_name: 'MiniMax-AI/minimax-code', html_url: 'https://github.com/MiniMax-AI/minimax-code' },
     issue: { number: 7, title: 'Synthetic issue', body: `$(touch ${marker}) <at id=all>test</at>`, labels: [{ name: 'bug' }], created_at: '2026-09-18T00:00:00Z', html_url: 'https://github.com/MiniMax-AI/minimax-code/issues/7', user: { login: 'fixture' } },
   };
   const eventPath = path.join(directory, 'event.json');

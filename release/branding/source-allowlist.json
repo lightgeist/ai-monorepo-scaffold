@@ -14335,6 +14335,30 @@
       "line": 4141,
       "lineSha256": "1297fe5bc507887ad06a1c26f092190c4b339052b289bf8a5682d640b024560f",
       "category": "IMMUTABLE_VENDOR_PATH"
+    },
+    {
+      "path": ".github/workflows/sync-issue-to-feishu.yml",
+      "lineSha256": "7d1388bb48c86d20f61a25bbcfd3c81c4d64c283c6275be6a13cd68b98d5f313",
+      "category": "EXTERNAL_UPSTREAM_SUPPORT_GUARD",
+      "reason": "Original repository guard retained exactly; it deliberately prevents forwarding issues from the AtlasCode fork to upstream support."
+    },
+    {
+      "path": "test/source-sync.test.mjs",
+      "lineSha256": "58e7b8a470f87c20b74527d400c75275660ff9d1bf38753f4016771b3880f65c",
+      "category": "EXTERNAL_UPSTREAM_SUPPORT_GUARD",
+      "reason": "Original repository guard retained exactly; it deliberately prevents forwarding issues from the AtlasCode fork to upstream support."
+    },
+    {
+      "path": "test/source-sync.test.mjs",
+      "lineSha256": "1aedd8ef43b9877cefca191a36ed423b3493d2e44a236f23a3dd532bc834ddf3",
+      "category": "EXTERNAL_UPSTREAM_SUPPORT_GUARD",
+      "reason": "Original repository guard retained exactly; it deliberately prevents forwarding issues from the AtlasCode fork to upstream support."
+    },
+    {
+      "path": "test/source-sync.test.mjs",
+      "lineSha256": "6a9ab258f5ad62b6b4e4ddd73b135e7f27ba20c7bea41519f3fbb8fc26b0320c",
+      "category": "EXTERNAL_UPSTREAM_SUPPORT_GUARD",
+      "reason": "Original repository guard retained exactly; it deliberately prevents forwarding issues from the AtlasCode fork to upstream support."
     }
   ]
 }
