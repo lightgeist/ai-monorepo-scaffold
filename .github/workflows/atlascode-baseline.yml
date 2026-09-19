@@ -1,0 +1,84 @@
+name: AtlasCode public upstream baseline
+on:
+  push:
+    branches: ['atlascode/baseline-20260919']
+    paths: ['.github/workflows/atlascode-baseline.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MiniMax-AI/minimax-code
+          ref: e3724a13d72d61c9bdc68a1a72b5c020f065ba26
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - name: Archive pinned public source and runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p acquisition baseline-evidence
+          git -C upstream rev-parse HEAD | tee baseline-evidence/upstream-sha.txt
+          tar --exclude=.git -czf acquisition/upstream-source.tar.gz -C upstream .
+          NODE_ROOT=$(dirname "$(dirname "$(command -v node)")")
+          tar -czf acquisition/node-linux-x64.tar.gz -C "$NODE_ROOT" .
+          node --version > baseline-evidence/node-version.txt
+          sha256sum acquisition/* > acquisition/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        continue-on-error: true
+        with:
+          name: atlascode-pinned-source
+          path: |
+            acquisition/
+            baseline-evidence/
+          compression-level: 0
+          retention-days: 3
+      - name: Frozen install
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          pnpm install --frozen-lockfile 2>&1 | tee ../baseline-evidence/install.log
+      - name: Unmodified build
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee ../baseline-evidence/build.log
+      - name: Upstream baseline checks
+        working-directory: upstream
+        shell: bash
+        run: |
+          set +e
+          for task in typecheck test:smoke test:byok test:policy test:sandbox test:status-contract test:capabilities test:artifact; do
+            logfile="${task//:/-}"
+            timeout 180 pnpm "$task" > "../baseline-evidence/${logfile}.log" 2>&1
+            code=$?
+            printf '%s\n' "$code" > "../baseline-evidence/${logfile}.exit"
+            printf '%s exit=%s\n' "$task" "$code"
+          done
+      - name: Offline checkout archive
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p offline
+          tar --exclude=.git -czf offline/upstream-with-dependencies.tar.gz -C upstream .
+          sha256sum offline/* > offline/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-upstream-offline-baseline
+          path: |
+            offline/
+            baseline-evidence/
+          compression-level: 0
+          retention-days: 3
