@@ -1,0 +1,39 @@
+# Build output
+dist/
+build/
+DerivedData/
+*.xcarchive
+*.dmg
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Signing material and secrets — never commit
+*.p12
+*.p8
+*.cer
+*.certSigningRequest
+.env
+
+# Claude Code settings personal to this machine
+.claude/settings.local.json
+BUILD_PLAN.md
+
+# AtlasCanvas build/runtime products
+.build/
+.swiftpm/
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+DerivedData/
+*.xcresult/
+companion/.models/
+.env
+*.key
