@@ -1,0 +1,41 @@
+name: Pinned public source acquisition
+on:
+  push:
+    branches: ['build-tools/source-c024e104-20260919']
+    paths: ['.github/workflows/public-source-acquire.yml']
+permissions:
+  contents: read
+concurrency:
+  group: public-source-c024e104-20260919
+  cancel-in-progress: false
+jobs:
+  acquire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Acquire only already-public source; no application execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-acquire/source" "$RUNNER_TEMP/public-acquire/delivery"
+          cd "$RUNNER_TEMP/public-acquire/source"
+          git init nautilo
+          cd nautilo
+          git remote add upstream https://github.com/agentsea/nautilo.git
+          git fetch --depth=1 upstream c024e1044a1d5e091d64e41aa912c99ec366ae9b
+          git checkout -b source-c024e104 FETCH_HEAD
+          test "$(git rev-parse HEAD)" = c024e1044a1d5e091d64e41aa912c99ec366ae9b
+          git rev-parse HEAD > ../../delivery/upstream-commit.txt
+          git archive --format=tar.gz HEAD > ../../delivery/nautilo-pinned.tar.gz
+          git bundle create ../../delivery/nautilo-pinned.bundle --all
+          cp AGENTS.md package.json ../../delivery/
+          cd ../../delivery
+          sha256sum nautilo-pinned.tar.gz nautilo-pinned.bundle > SHA256SUMS
+          printf '{"purpose":"public source acquisition only","source":"agentsea/nautilo","commit":"c024e1044a1d5e091d64e41aa912c99ec366ae9b","run_id":"%s","attempt":"%s"}\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > acquisition.json
+      - name: Archive acquired public bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-nautilo-source-c024e104
+          path: ${{ runner.temp }}/public-acquire/delivery/
+          if-no-files-found: error
+          retention-days: 1
