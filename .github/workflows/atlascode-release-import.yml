@@ -1,0 +1,101 @@
+name: AtlasCode source and clean release qualification
+on:
+  push:
+    branches: ['atlascode/baseline-20260919']
+    paths: ['.github/workflows/atlascode-release-import.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  qualify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - name: Acquire exact reviewed source snapshot
+        env:
+          SOURCE_URL: 'https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-7e2c-8211-b209-3cb201286553/raw?se=2026-09-19T02%3A34%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=b320ce03-fb1c-5eda-8319-2a9e25185090&skoid=37f774a3-b6f2-4e56-9fdd-339e5d6e97f8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-19T01%3A04%3A30Z&ske=2026-09-20T01%3A04%3A30Z&sks=b&skv=2026-02-06&sig=7SfyLXwb/sl8nx5WkmPBrOtZgF0kYrhVy3tC0KjB5XA%3D'
+        run: |
+          mkdir -p qualification
+          curl --fail --location --retry 2 "$SOURCE_URL" -o source.zip
+          echo 'da5f45e8daae03b832e4b3fc41ad3c6b138a58f9cecacb0bbf4209b81c9d548a  source.zip' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,os
+          root=Path('atlascode-source').resolve(); root.mkdir()
+          with zipfile.ZipFile('source.zip') as z:
+            for e in z.infolist():
+              dest=(root/e.filename).resolve()
+              assert dest.is_relative_to(root),e.filename
+              z.extract(e,root)
+              if e.external_attr>>16: os.chmod(dest,(e.external_attr>>16)&0o777)
+          PY
+          node atlascode-source/scripts/check-brand.mjs > qualification/source-brand.json
+      - name: Publish source to dedicated branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          cd atlascode-source
+          git init -b atlascode/v0.1.0
+          git config user.name 'AtlasCode Release Automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .
+          git commit -m 'AtlasCode v0.1.0 by Deep Intuition: faithful rebrand of pinned upstream'
+          git remote add origin https://github.com/lightgeist/ai-monorepo-scaffold.git
+          git push origin HEAD:refs/heads/atlascode/v0.1.0
+          git rev-parse HEAD | tee ../qualification/source-commit.txt
+      - name: Install frozen dependencies
+        working-directory: atlascode-source
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          pnpm install --frozen-lockfile 2>&1 | tee ../qualification/install.log
+      - name: Build actual distribution
+        working-directory: atlascode-source
+        run: |
+          pnpm build 2>&1 | tee ../qualification/build.log
+          node scripts/package-atlascode.mjs ../distribution 2>&1 | tee ../qualification/package.log
+      - name: Run release regression suites
+        working-directory: atlascode-source
+        run: |
+          set +e
+          failed=0
+          for task in typecheck check:source check:tsconfig check:standalone check:brand test:smoke test:byok test:policy test:sandbox test:status-contract test:capabilities test:artifact; do
+            logfile="${task//:/-}"
+            timeout 360 pnpm "$task" > "../qualification/${logfile}.log" 2>&1
+            code=$?
+            printf '%s\n' "$code" > "../qualification/${logfile}.exit"
+            printf '%s exit=%s\n' "$task" "$code"
+            if [ "$code" != 0 ]; then failed=1; tail -n 60 "../qualification/${logfile}.log"; fi
+          done
+          exit "$failed"
+      - name: Fresh prefix install and actual CLI smoke
+        if: always()
+        run: |
+          set -euo pipefail
+          test -f distribution/deepintuition-atlascode-0.1.0.tgz
+          mkdir -p clean-prefix clean-home clean-project
+          npm install --global --prefix "$PWD/clean-prefix" "$PWD/distribution/deepintuition-atlascode-0.1.0.tgz" 2>&1 | tee qualification/clean-install.log
+          export HOME="$PWD/clean-home"
+          export ATLASCODE_DATA_DIR="$HOME/.atlascode"
+          export PATH="$PWD/clean-prefix/bin:$PATH"
+          cd clean-project
+          atlascode --version | tee ../qualification/installed-version.txt
+          atlascode --help | tee ../qualification/installed-help.txt
+          node -e 'const fs=require("fs");const h=fs.readFileSync("../qualification/installed-help.txt","utf8");if(!h.includes("atlascode")||/MiniMax Code|MCode|Mavis/.test(h))process.exit(1)'
+          test "$(atlascode --version)" = '0.1.0'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-release-linux
+          path: |
+            distribution/deepintuition-atlascode-0.1.0.tgz
+            distribution/npm-pack.json
+            qualification/
+          retention-days: 7
