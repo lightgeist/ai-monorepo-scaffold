@@ -1,0 +1,36 @@
+name: AtlasCode public dependency cache
+on:
+  push:
+    branches: [atlascode-upstream-qualification]
+    paths: [.github/workflows/atlascode-install-cache.yml]
+permissions:
+  contents: read
+jobs:
+  cache:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve only public distribution dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/export/dependencies" "$RUNNER_TEMP/export/npm-cache" "$RUNNER_TEMP/export/npm-cli"
+          cd "$RUNNER_TEMP/export/dependencies"
+          cat > package.json <<'JSON'
+          {"name":"atlascode-public-dependency-cache","version":"0.1.0","private":true,"dependencies":{"better-sqlite3":"12.11.1","@mariozechner/clipboard":"0.3.9","@vscode/ripgrep":"1.18.0","@larksuiteoapi/node-sdk":"1.73.3"}}
+          JSON
+          npm install --cache "$RUNNER_TEMP/export/npm-cache" --no-audit --no-fund
+          node -e 'const D=require("better-sqlite3");const d=new D(":memory:");console.log(d.prepare("select 42 as value").get());d.close()'
+          node --version > "$RUNNER_TEMP/export/node-version.txt"
+          npm --version > "$RUNNER_TEMP/export/npm-version.txt"
+          cd "$RUNNER_TEMP/export/npm-cli"
+          npm pack npm@11.19.0 --silent
+          tar -C "$RUNNER_TEMP/export" -czf "$RUNNER_TEMP/AtlasCode-public-install-cache.tar.gz" .
+          sha256sum "$RUNNER_TEMP/AtlasCode-public-install-cache.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlasCode-public-install-cache
+          path: ${{ runner.temp }}/AtlasCode-public-install-cache.tar.gz
+          retention-days: 1
+          compression-level: 0
