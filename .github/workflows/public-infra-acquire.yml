@@ -1,0 +1,47 @@
+name: Public database and identity runtime acquisition
+on:
+  push:
+    branches: ['build-tools/source-c024e104-20260919']
+    paths: ['.github/workflows/public-infra-acquire.yml']
+permissions:
+  contents: read
+concurrency:
+  group: public-infra-c024e104-20260919
+  cancel-in-progress: false
+jobs:
+  acquire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: postgres17-pgvector
+            image: pgvector/pgvector:pg17
+          - label: logto-1.38.0
+            image: ghcr.io/logto-io/logto:1.38.0
+    steps:
+      - name: Resolve and export unstarted public runtime; no user data or secrets
+        env:
+          IMAGE: ${{ matrix.image }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-infra"
+          cd "$RUNNER_TEMP/public-infra"
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{json .RepoDigests}}' > "$LABEL-digests.json"
+          docker image inspect "$IMAGE" --format '{{json .Config}}' > "$LABEL-image-config.json"
+          container=$(docker create "$IMAGE")
+          trap 'docker rm -v "$container" >/dev/null' EXIT
+          docker export "$container" | gzip -3 > "$LABEL-rootfs.tar.gz"
+          sha256sum "$LABEL-rootfs.tar.gz" > "$LABEL-rootfs.sha256"
+          ls -lh "$LABEL-rootfs.tar.gz"
+      - name: Transfer public runtime files only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-runtime-${{ matrix.label }}
+          path: ${{ runner.temp }}/public-infra/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
