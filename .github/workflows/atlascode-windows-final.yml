@@ -1,0 +1,115 @@
+name: AtlasCode Windows artifact and differential qualification
+on:
+  push:
+    branches: ['atlascode/baseline-20260919']
+    paths: ['.github/workflows/atlascode-windows-final.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - name: Get the exact Linux and macOS qualified tarball
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/qualification" | Out-Null
+          gh run download 35416451142 --repo lightgeist/ai-monorepo-scaffold --name atlascode-final-ubuntu-22.04 --dir "$env:RUNNER_TEMP/linux-artifact"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $package = "$env:RUNNER_TEMP/linux-artifact/distribution/deepintuition-atlascode-0.1.0.tgz"
+          $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'cd0af98b56b53aace98175978fffd0ae662692958d2fe8216ccf8a96e9e43f5b') { throw "Package checksum mismatch: $hash" }
+          $hash | Set-Content "$env:RUNNER_TEMP/qualification/package-sha256.txt"
+      - name: Clean PowerShell installation and executable validation
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'atlascode-powershell-prefix'
+          $homePath = Join-Path $env:RUNNER_TEMP 'atlascode-powershell-home'
+          New-Item -ItemType Directory -Force $prefix,$homePath | Out-Null
+          $package = "$env:RUNNER_TEMP/linux-artifact/distribution/deepintuition-atlascode-0.1.0.tgz"
+          & npm.cmd install --global --prefix $prefix $package 2>&1 | Tee-Object "$env:RUNNER_TEMP/qualification/clean-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:HOME = $homePath
+          $env:ATLASCODE_DATA_DIR = Join-Path $homePath '.atlascode'
+          $launcher = Join-Path $prefix 'atlascode.cmd'
+          $version = & $launcher --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version | Set-Content "$env:RUNNER_TEMP/qualification/installed-version.txt"
+          if ($version.Trim() -ne '0.1.0') { throw 'Wrong version' }
+          & $launcher --help | Tee-Object "$env:RUNNER_TEMP/qualification/installed-help.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $help = Get-Content "$env:RUNNER_TEMP/qualification/installed-help.txt" -Raw
+          if ($help -notmatch 'atlascode' -or $help -match 'MiniMax Code|MCode|Mavis') { throw 'Help brand gate failed' }
+          $env:PATH = "$prefix;$env:PATH"
+          & atlascode.cmd --version | Set-Content "$env:RUNNER_TEMP/qualification/path-version.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          '{"status":"PASS","shell":"PowerShell","installation":"fresh npm global prefix","artifactSha256":"cd0af98b56b53aace98175978fffd0ae662692958d2fe8216ccf8a96e9e43f5b"}' | Set-Content "$env:RUNNER_TEMP/qualification/install-result.json"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 453bfe46f91ad4985255b0b2edc86b59a8fe379b
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MiniMax-AI/minimax-code
+          ref: e3724a13d72d61c9bdc68a1a72b5c020f065ba26
+          path: upstream
+          persist-credentials: false
+      - name: Compare same Windows policy and sandbox fixtures
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          set +e
+          for tree in upstream candidate; do
+            cd "$GITHUB_WORKSPACE/$tree"
+            pnpm install --frozen-lockfile > "$RUNNER_TEMP/qualification/$tree-install.log" 2>&1
+            code=$?
+            printf '%s\n' "$code" > "$RUNNER_TEMP/qualification/$tree-install.exit"
+            if [ "$code" != 0 ]; then tail -n 30 "$RUNNER_TEMP/qualification/$tree-install.log"; exit "$code"; fi
+            for task in test:policy test:sandbox; do
+              label="${task//:/-}"
+              pnpm "$task" > "$RUNNER_TEMP/qualification/$tree-$label.log" 2>&1
+              printf '%s\n' "$?" > "$RUNNER_TEMP/qualification/$tree-$label.exit"
+            done
+          done
+      - name: Report differential evidence without converting failures to passes
+        shell: pwsh
+        run: |
+          @'
+          import os,re,json
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'qualification'
+          ansi=re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+          reports={}
+          for suite in ['test-policy','test-sandbox']:
+            pair={}
+            for tree in ['upstream','candidate']:
+              text=ansi.sub('',(root/f'{tree}-{suite}.log').read_text(encoding='utf-8-sig',errors='replace'))
+              failures=[]
+              for line in text.splitlines():
+                if re.search(r'\bFAIL\s',line):
+                  line=re.sub(r'MiniMax Code|MCode|mcode|Mavis|mavis','BRAND',line,flags=re.I)
+                  failures.append(re.sub(r'\s+',' ',line).strip())
+              pair[tree]={'exit':int((root/f'{tree}-{suite}.exit').read_text().strip()),'failedCases':sorted(set(failures)),'summaries':[line.strip() for line in text.splitlines() if re.match(r'^\s*(Test Files|Tests)\s',line)]}
+            pair['sameFailureSet']=pair['upstream']['exit']==pair['candidate']['exit'] and pair['upstream']['failedCases']==pair['candidate']['failedCases'] and bool(pair['candidate']['failedCases'])
+            reports[suite]=pair
+          result={'comparison':'unchanged upstream vs AtlasCode on same Windows runner','candidateRevision':'453bfe46f91ad4985255b0b2edc86b59a8fe379b','upstreamRevision':'e3724a13d72d61c9bdc68a1a72b5c020f065ba26','suites':reports,'noAdditionalFailedCases':all(v['sameFailureSet'] for v in reports.values()),'policyFullyQualified':False}
+          (root/'windows-differential.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+          print(json.dumps(result,indent=2))
+          if not result['noAdditionalFailedCases']: raise SystemExit(1)
+          '@ | python -
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-windows-final-evidence
+          path: ${{ runner.temp }}/qualification/
+          retention-days: 7
