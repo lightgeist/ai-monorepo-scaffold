@@ -1,0 +1,96 @@
+name: AtlasCanvas native qualification
+on:
+  push:
+    branches: [atlascanvas/native-v0.1]
+    paths: ['incoming/wave.json', '.github/workflows/atlascanvas-native.yml', 'scripts/apply-wave.py']
+permissions:
+  contents: write
+concurrency:
+  group: atlascanvas-native
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      candidate: ${{ steps.commit.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: atlascanvas/native-v0.1
+      - name: Verify and install author-created source overlay
+        run: python3 scripts/apply-wave.py
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Generate licensed photographic fixtures
+        run: |
+          python -m pip install 'scikit-image==0.26.0' 'Pillow==12.1.1'
+          python - <<'PY'
+          from pathlib import Path
+          from skimage import data
+          from PIL import Image
+          root=Path('AtlasCanvas/CompositorTests/Fixtures');root.mkdir(parents=True,exist_ok=True)
+          for name in ['astronaut','coffee','chelsea']:
+              Image.fromarray(getattr(data,name)()).save(root/(name+'.png'))
+          PY
+      - name: Commit reproducible candidate
+        id: commit
+        run: |
+          python3 - <<'PY'
+          import pathlib,hashlib,json
+          root=pathlib.Path('AtlasCanvas'); manifest={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          pathlib.Path('candidate-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          git config user.name 'AtlasCanvas Build'
+          git config user.email 'atlascanvas-build@users.noreply.github.com'
+          git add AtlasCanvas incoming candidate-manifest.json
+          git diff --cached --quiet || git commit -m 'AtlasCanvas: materialize verified candidate [skip ci]'
+          git push origin HEAD:atlascanvas/native-v0.1
+          echo "candidate=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  macos:
+    needs: source
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.source.outputs.candidate }}
+          persist-credentials: false
+      - name: Native and portable tests
+        working-directory: AtlasCanvas
+        run: |
+          mkdir -p evidence/ci
+          sw_vers | tee evidence/ci/environment.txt
+          xcodebuild -version | tee -a evidence/ci/environment.txt
+          git rev-parse HEAD | tee evidence/ci/commit.txt
+          set -o pipefail
+          swift test 2>&1 | tee evidence/ci/core.log
+          xcodebuild -project Compositor.xcodeproj -scheme Compositor -destination 'platform=macOS' -derivedDataPath /tmp/atlascanvas-build -resultBundlePath evidence/ci/native.xcresult CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=NO test 2>&1 | tee evidence/ci/native.log
+      - name: Package exact source and available app
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          root=pathlib.Path('AtlasCanvas')
+          with zipfile.ZipFile('AtlasCanvas-candidate-source.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file() and not any(part in {'.build','.swiftpm','.git','evidence','__pycache__'} for part in p.relative_to(root).parts):
+                      z.write(p,str(p.relative_to(root)))
+          print('SOURCE SHA256',hashlib.sha256(pathlib.Path('AtlasCanvas-candidate-source.zip').read_bytes()).hexdigest())
+          PY
+          app=$(find /tmp/atlascanvas-build/Build/Products -maxdepth 2 -name '*.app' -not -name '*Runner*' -type d | head -1)
+          if [ -n "$app" ]; then ditto -c -k --sequesterRsrc --keepParent "$app" AtlasCanvas-native-app.zip; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascanvas-native-${{ github.run_id }}
+          path: |
+            AtlasCanvas/evidence/ci
+            AtlasCanvas-candidate-source.zip
+            AtlasCanvas-native-app.zip
+            candidate-manifest.json
+          retention-days: 3
+          if-no-files-found: error
