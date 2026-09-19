@@ -1,0 +1,24 @@
+name: AtlasCanvas public upstream source
+on:
+  push:
+    branches: [atlascanvas/upstream-transfer]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: robbietilton/Compositor
+          ref: a19db9011282399785dc18efcfded904627bdcc2
+          persist-credentials: false
+          path: upstream
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Compositor-public-upstream
+          path: upstream/
+          include-hidden-files: false
+          retention-days: 1
+          if-no-files-found: error
