@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+runtime_executable=${__ATLASCODE_TOOLS_RUNTIME_EXECUTABLE:-}
+if [ -z "$runtime_executable" ]; then
+  echo "AtlasCode atlascode-tools runtime is unavailable. Restart AtlasCode." >&2
+  exit 1
+fi
+atlascode_tools_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$runtime_executable" "$atlascode_tools_bin_dir/../atlascode-tools.js" "$@"

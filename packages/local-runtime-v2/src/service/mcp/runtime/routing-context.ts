@@ -1,0 +1,9 @@
+import type { AtlasCodeBuildEnv } from '@atlascode/config';
+
+/** Read the managed-routing gate without a config fallback. */
+export function getRawRuntimeBuildEnv(): AtlasCodeBuildEnv | undefined {
+  const value = process.env.ATLASCODE_BUILD_ENV;
+  return value === 'dev' || value === 'test' || value === 'staging' || value === 'prod'
+    ? value
+    : undefined;
+}

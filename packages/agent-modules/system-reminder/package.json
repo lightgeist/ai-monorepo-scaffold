@@ -1,0 +1,21 @@
+{
+  "name": "@atlascode/system-reminder",
+  "version": "0.2.1",
+  "description": "Framework-agnostic system-reminder assembly for AtlasCode agents; never imports runtime packages.",
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "devDependencies": {
+    "@atlascode/config": "workspace:^",
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^2"
+  },
+  "private": true,
+  "license": "MIT"
+}

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AtlasCode Web Brand Style Guide Case Source</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    :root {
+      --ink: #161629;
+      --paper: #FAFAFD;
+      --white: #FFFFFF;
+      --muted: #5D6673;
+      --rule: #E2E5EA;
+      --magenta: #5A36C9;
+      --coral: #AD9AFF;
+      --violet: #8265EB;
+      --lavender: #D6CCFF;
+      --slate: #83899F;
+    }
+    html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo", "Helvetica Neue", Arial, sans-serif; }
+    .page { height: calc(297mm - 30mm); page-break-after: always; break-after: page; display: flex; flex-direction: column; overflow: hidden; }
+    .page:last-of-type { page-break-after: auto; break-after: auto; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 0.6px solid var(--rule); padding-bottom: 4mm; margin-bottom: 5mm; }
+    .brand-lockup { display: flex; align-items: center; gap: 4mm; }
+    .brand-lockup img { width: 46mm; height: auto; display: block; }
+    .doc-kicker { font-size: 8pt; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .doc-title { font-size: 14pt; font-weight: 800; margin-top: 1mm; }
+    .meta { text-align: right; font-size: 8pt; color: var(--muted); line-height: 1.45; }
+    .hero { display: grid; grid-template-columns: 48mm 1fr; gap: 7mm; align-items: stretch; margin-bottom: 6mm; }
+    .mark-panel { border-radius: 6mm; background: radial-gradient(circle at 30% 20%, rgba(224,32,96,.24), transparent 38%), radial-gradient(circle at 80% 85%, rgba(128,96,240,.24), transparent 42%), var(--white); border: .5px solid var(--rule); display: flex; align-items: center; justify-content: center; min-height: 50mm; }
+    .mark { width: 28mm; height: 28mm; border-radius: 9mm; background: linear-gradient(145deg, var(--violet), var(--magenta) 55%, var(--coral)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.45); position: relative; }
+    .mark:before, .mark:after { content: ""; position: absolute; background: rgba(255,255,255,.92); border-radius: 8mm; }
+    .mark:before { width: 16mm; height: 4.5mm; left: 6mm; top: 8mm; transform: rotate(32deg); }
+    .mark:after { width: 16mm; height: 4.5mm; right: 6mm; bottom: 8mm; transform: rotate(32deg); opacity: .78; }
+    .positioning { background: var(--ink); color: #fff; border-radius: 6mm; padding: 7mm; display: flex; flex-direction: column; justify-content: space-between; min-height: 50mm; }
+    .positioning h1 { margin: 0; font-size: 31pt; line-height: 1.02; letter-spacing: -.04em; }
+    .gradient-text { background: linear-gradient(90deg, var(--magenta), var(--coral)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .positioning p { margin: 4mm 0 0; font-size: 9.5pt; line-height: 1.45; color: rgba(255,255,255,.78); max-width: 105mm; }
+    .section { margin-top: 4mm; }
+    .section-label { font-size: 7.5pt; color: var(--muted); letter-spacing: .18em; text-transform: uppercase; font-weight: 800; margin-bottom: 3mm; }
+    .palette { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3mm; }
+    .swatch { background: var(--white); border: .5px solid var(--rule); border-radius: 3mm; overflow: hidden; min-height: 28mm; }
+    .chip { height: 14mm; }
+    .swatch-meta { padding: 2mm 2.2mm; }
+    .swatch-name { font-size: 7.5pt; font-weight: 800; line-height: 1.15; }
+    .hex { font-size: 7pt; color: var(--muted); margin-top: .8mm; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .type-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 5mm; }
+    .type-card { background: var(--white); border: .5px solid var(--rule); border-radius: 4mm; padding: 4mm; min-height: 41mm; }
+    .specimen-big { font-size: 27pt; line-height: 1; letter-spacing: -.04em; font-weight: 850; }
+    .specimen-body { font-size: 10pt; color: var(--muted); line-height: 1.45; margin-top: 3mm; }
+    table { width: 100%; border-collapse: collapse; font-size: 7.8pt; }
+    th { text-align: left; background: var(--ink); color: #fff; font-weight: 800; padding: 2mm; }
+    td { padding: 1.8mm 2mm; border-bottom: .4px solid var(--rule); }
+    .footer { margin-top: auto; border-top: .5px solid var(--rule); padding-top: 2mm; display: grid; grid-template-columns: 1fr 1fr 1fr; font-size: 7.5pt; color: var(--muted); }
+    .footer .center { text-align: center; font-style: italic; }
+    .footer .right { text-align: right; }
+    .voice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; margin-bottom: 5mm; }
+    .voice-card { background: var(--white); border: .5px solid var(--rule); border-radius: 4mm; padding: 4mm; min-height: 42mm; }
+    .voice-card .num { color: var(--magenta); font-size: 8pt; font-weight: 900; letter-spacing: .12em; }
+    .voice-card h3 { margin: 2mm 0 1.5mm; font-size: 13pt; line-height: 1.1; }
+    .voice-card p { margin: 0; font-size: 8.2pt; line-height: 1.42; color: var(--muted); }
+    .tagline-box { background: linear-gradient(135deg, rgba(224,32,96,.10), rgba(128,96,240,.13)); border: .5px solid var(--rule); border-radius: 5mm; padding: 5mm; margin-bottom: 5mm; }
+    .tagline { font-size: 27pt; line-height: 1.03; font-weight: 900; letter-spacing: -.04em; max-width: 140mm; }
+    .tagline-note { margin-top: 2.5mm; font-size: 8.2pt; line-height: 1.45; color: var(--muted); }
+    .rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+    .rules-col { background: var(--white); border: .5px solid var(--rule); border-radius: 4mm; padding: 4mm; }
+    .rules-col h4 { margin: 0 0 2mm; font-size: 11pt; }
+    .rule-row { display: grid; grid-template-columns: 5mm 1fr; gap: 2mm; padding: 1.4mm 0; border-top: .4px solid var(--rule); font-size: 7.9pt; line-height: 1.35; }
+    .glyph { font-weight: 900; }
+    .do .glyph { color: #1F8A4C; }
+    .dont .glyph { color: #D01316; }
+    .app-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2.5mm; margin: 3mm 0 5mm; }
+    .app { border-radius: 3mm; padding: 2.5mm; background: var(--ink); color: #fff; min-height: 20mm; display: flex; flex-direction: column; justify-content: space-between; }
+    .app span { font-size: 7pt; color: rgba(255,255,255,.62); text-transform: uppercase; letter-spacing: .12em; }
+    .app strong { font-size: 8.7pt; line-height: 1.1; }
+    .app:nth-child(2) { background: linear-gradient(135deg, var(--magenta), var(--coral)); }
+    .app:nth-child(3) { background: linear-gradient(135deg, var(--violet), #4F46E5); }
+    .app:nth-child(4) { background: #2A3340; }
+    .app:nth-child(5) { background: #46515F; }
+    @media screen { html { background: #d0d0d0; } body { padding: 20px 0; } body > section { width: 210mm; min-height: 297mm; margin: 0 auto 20px; background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,.18); padding: 15mm; } }
+  </style>
+</head>
+<body>
+<section class="page" data-page="1"><header><div class="brand-lockup"><strong>AtlasCode</strong> <span>by Deep Intuition</span></div><div class="doc-kicker">Illustrative brand template · page 1</div></header>
+<div class="hero"><div class="mark-panel"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 110" width="100" aria-label="Orbit motif"><g fill="none" stroke="#8265EB" stroke-width="2"><ellipse cx="45" cy="55" rx="26" ry="35"/><ellipse cx="51" cy="55" rx="23" ry="35"/><ellipse cx="57" cy="55" rx="20" ry="35"/></g></svg></div><div class="positioning"><h1>AtlasCode</h1><p>Terminal coding agent by Deep Intuition. Clear hierarchy, readable tool output and a restrained violet accent.</p></div></div>
+<div class="section-label">01 / Theme-derived palette</div><div class="palette"><div class="swatch"><div class="chip" style="background:#050B15"></div><div class="swatch-meta"><div class="swatch-name">Navy</div><div class="hex">#050B15</div></div></div><div class="swatch"><div class="chip" style="background:#5A36C9"></div><div class="swatch-meta"><div class="swatch-name">Violet</div><div class="hex">#5A36C9</div></div></div><div class="swatch"><div class="chip" style="background:#AD9AFF"></div><div class="swatch-meta"><div class="swatch-name">Lavender</div><div class="hex">#AD9AFF</div></div></div><div class="swatch"><div class="chip" style="background:#8265EB"></div><div class="swatch-meta"><div class="swatch-name">Shadow</div><div class="hex">#8265EB</div></div></div><div class="swatch"><div class="chip" style="background:#ECECF5"></div><div class="swatch-meta"><div class="swatch-name">Foreground</div><div class="hex">#ECECF5</div></div></div><div class="swatch"><div class="chip" style="background:#83899F"></div><div class="swatch-meta"><div class="swatch-name">Muted</div><div class="hex">#83899F</div></div></div></div><div class="section type-grid"><div class="type-card"><div class="section-label">02 / Typography</div><div class="specimen-big">AtlasCode</div><p class="specimen-body">Use the terminal's configured monospace font in the product. This print example uses a system sans font. No licensed font files are bundled.</p></div><div class="type-card"><div class="section-label">03 / Hierarchy</div><table><tr><th>Role</th><th>Purpose</th></tr><tr><td>Heading</td><td>Identify the current view</td></tr><tr><td>Body</td><td>Readable messages and tool results</td></tr><tr><td>Accent</td><td>Focus and selected state</td></tr><tr><td>Muted</td><td>Secondary metadata</td></tr></table></div></div><footer class="footer"><div>Page 1 of 2</div><div class="center">Illustrative editable template</div><div class="right">Deep Intuition</div></footer></section>
+<section class="page" data-page="2"><header><strong>AtlasCode · by Deep Intuition</strong><div class="doc-kicker">Voice and application · page 2</div></header><div class="voice-grid"><div class="voice-card"><div class="num">01</div><h3>Specific</h3><p>State what a tool did and what evidence was observed. Do not invent a capability or a successful result.</p></div><div class="voice-card"><div class="num">02</div><h3>Readable</h3><p>Separate the request, model response, tool action and result. Preserve usable contrast and navigation.</p></div><div class="voice-card"><div class="num">03</div><h3>Honest</h3><p>Keep real provider names and required upstream notices. Product identity is not permission to misrepresent ownership.</p></div></div><div class="tagline-box"><div class="section-label">04 / Product lockup</div><div class="tagline">AtlasCode<br>by Deep Intuition</div><p class="tagline-note">This example is derived from the supplied theme. It is not a statement of a new corporate mission, a hosted service, or an independently trained model.</p></div><div class="section-label">05 / Interface rhythm</div><div class="app-strip"><div class="app"><span>Input</span><strong>Composer</strong></div><div class="app"><span>Work</span><strong>Tools</strong></div><div class="app"><span>History</span><strong>Sessions</strong></div><div class="app"><span>Safety</span><strong>Approvals</strong></div><div class="app"><span>Context</span><strong>Status</strong></div></div><div class="rules-grid"><div class="rules-col"><h4>Do</h4><p>Use a consistent wordmark, restrained accent, explicit states and tested contrast.</p><p>Capture real interface evidence before making release claims.</p></div><div class="rules-col"><h4>Do not</h4><p>Copy an unrelated company's product matrix or present its model as an AtlasCode model.</p><p>Substitute a generated illustration for a tested application screen.</p></div></div><footer class="footer"><div>Editable source example</div><div class="center">Verify pagination after editing</div><div class="right">Page 2 of 2</div></footer></section></body></html>

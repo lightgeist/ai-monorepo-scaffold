@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="AtlasCodeDocx.Cli/AtlasCodeDocx.Cli.csproj" />
+  <Project Path="AtlasCodeDocx.Core/AtlasCodeDocx.Core.csproj" />
+</Solution>

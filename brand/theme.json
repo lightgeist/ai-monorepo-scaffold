@@ -1,0 +1,56 @@
+{
+  "product": "AtlasCode",
+  "byline": "by Deep Intuition",
+  "reference": "Deep Intuition: Bridging Enterprise AI Silos",
+  "terminalBackgroundPolicy": "Terminal-owned; preserve existing light/dark detection. Reference backgrounds below are not forcibly painted.",
+  "referenceBackgrounds": {
+    "dark": "#050B15",
+    "light": "#FAFAFD"
+  },
+  "palettes": {
+    "dark": {
+      "brand": "#AD9AFF",
+      "wordmarkHighlight": "#D6CCFF",
+      "wordmarkShadow": "#8265EB",
+      "signal": "#AD9AFF",
+      "orbit": "#A18BEC",
+      "accent": "#AD9AFF",
+      "markdownHeading": "#D2C5FF",
+      "markdownCode": "#9EDCB6",
+      "markdownLink": "#B8A5FF",
+      "userMessageBg": "#141729",
+      "diffAddedBg": "#163629",
+      "diffRemovedBg": "#3B2132",
+      "text": "#ECECF5",
+      "muted": "#B0B3CB",
+      "dim": "#83899F",
+      "border": "#383A53",
+      "line": "#83899F",
+      "success": "#8BDCAB",
+      "warning": "#EDC776",
+      "error": "#FF92AA"
+    },
+    "light": {
+      "brand": "#5A36C9",
+      "wordmarkHighlight": "#7350D6",
+      "wordmarkShadow": "#3D2393",
+      "signal": "#5A36C9",
+      "orbit": "#65519E",
+      "accent": "#5A36C9",
+      "markdownHeading": "#4B288E",
+      "markdownCode": "#266C43",
+      "markdownLink": "#5533BD",
+      "userMessageBg": "#F0EDF8",
+      "diffAddedBg": "#E4F4E9",
+      "diffRemovedBg": "#FCE9EF",
+      "text": "#161629",
+      "muted": "#585972",
+      "dim": "#737489",
+      "border": "#CDCADC",
+      "line": "#737489",
+      "success": "#247043",
+      "warning": "#8A590F",
+      "error": "#AD2646"
+    }
+  }
+}
