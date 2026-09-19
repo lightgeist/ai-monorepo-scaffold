@@ -1,0 +1,72 @@
+name: AtlasCode upstream qualification
+on:
+  push:
+    branches: [atlascode-upstream-qualification]
+    paths: [.github/workflows/atlascode-upstream.yml]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+      - name: Obtain public source and inspection tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/export/evidence" "$RUNNER_TEMP/export/bin" "$RUNNER_TEMP/export/tools"
+          git clone https://github.com/MiniMax-AI/minimax-code.git "$RUNNER_TEMP/export/upstream"
+          cd "$RUNNER_TEMP/export/upstream"
+          git checkout e3724a13d72d61c9bdc68a1a72b5c020f065ba26
+          git log --format=fuller > "$RUNNER_TEMP/export/evidence/upstream-history.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/export/evidence/upstream-sha.txt"
+          cp "$(command -v node)" "$RUNNER_TEMP/export/bin/node"
+          cd "$RUNNER_TEMP/export/tools"
+          npm pack pnpm@9.12.0 --silent
+          python3 -m pip download pyte==0.8.2 wcwidth==0.2.13 --dest .
+      - name: Export source first
+        run: |
+          tar -C "$RUNNER_TEMP/export" --exclude=upstream/.git -czf "$RUNNER_TEMP/AtlasCode-upstream-source.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlasCode-upstream-source
+          path: ${{ runner.temp }}/AtlasCode-upstream-source.tar.gz
+          retention-days: 1
+          compression-level: 0
+      - name: Install unchanged dependencies
+        run: |
+          set -o pipefail
+          cd "$RUNNER_TEMP/export/upstream"
+          pnpm install --frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/export/evidence/install.txt"
+      - name: Baseline build and checks
+        run: |
+          cd "$RUNNER_TEMP/export/upstream"
+          for task in build typecheck check:standalone check:tsconfig test:smoke test:policy test:byok test:sandbox test:status-contract test:capabilities test:artifact test:release-tools; do
+            name="${task//:/-}"
+            set +e
+            timeout 180 pnpm run "$task" > "$RUNNER_TEMP/export/evidence/$name.txt" 2>&1
+            rc=$?
+            set -e
+            printf '%s\t%s\n' "$task" "$rc" >> "$RUNNER_TEMP/export/evidence/results.tsv"
+            tail -15 "$RUNNER_TEMP/export/evidence/$name.txt"
+          done
+          cat "$RUNNER_TEMP/export/evidence/results.tsv"
+      - name: Package qualification environment
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/export/upstream/.git"
+          tar -C "$RUNNER_TEMP/export" -czf "$RUNNER_TEMP/AtlasCode-upstream-environment.tar.gz" .
+          sha256sum "$RUNNER_TEMP/AtlasCode-upstream-environment.tar.gz"
+          du -h "$RUNNER_TEMP/AtlasCode-upstream-environment.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AtlasCode-upstream-environment
+          path: ${{ runner.temp }}/AtlasCode-upstream-environment.tar.gz
+          retention-days: 1
+          compression-level: 0
