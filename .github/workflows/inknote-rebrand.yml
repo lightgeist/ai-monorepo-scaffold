@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: inknote-rebrand-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   native:
     strategy:
@@ -19,7 +19,7 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 35
     env:
       ARCH: ${{ matrix.arch }}
     steps:
@@ -44,11 +44,12 @@ jobs:
           python3 -m py_compile inknote/scripts/write-plist.py inknote/scripts/audit-release.py
       - name: Complete XCTest suite with snapshots enabled
         shell: bash
+        timeout-minutes: 18
         run: |
           set -o pipefail
           export INKNOTE_SNAP_DIR="$PWD/out/evidence/snapshots"
           cd inknote
-          swift test 2>&1 | tee ../out/evidence/tests.log
+          python3 ../inknote-build/run-tests.py ../out/evidence 2>&1 | tee ../out/evidence/tests.log
       - name: Build signed native app
         shell: bash
         run: |
@@ -94,7 +95,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out/evidence
-          grep -E 'error:| failed|Executed |ACCEPTANCE |Fatal|Traceback' out/evidence/*.log > out/evidence/triage.txt || true
+          grep -E 'error:| failed|Executed |ACCEPTANCE |Fatal|Traceback|TIMEOUT' out/evidence/*.log > out/evidence/triage.txt || true
       - name: Archive binaries source and verification evidence
         if: always()
         uses: actions/upload-artifact@v4
