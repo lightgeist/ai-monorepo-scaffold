@@ -31,5 +31,7 @@ def phase(name,args,limit):
     results.append({'phase':name,'command':args,'exit_code':code,'timed_out':timed_out,'seconds':round(time.monotonic()-start,3)})
     (out/'test-phases.json').write_text(json.dumps(results,indent=2)+'\n')
     if code:raise SystemExit(code)
-phase('compile',['swift','build','--build-tests','--jobs','3'],600)
-phase('execute',['swift','test','--skip-build'],300)
+phase('compile',['swift','build','--build-tests','--jobs','3'],480)
+# One successful Intel run spent 381 seconds in native scroll/layout stress tests.
+# Retain every test and allow measured slow-run behavior rather than weakening it.
+phase('execute',['swift','test','--skip-build'],540)
