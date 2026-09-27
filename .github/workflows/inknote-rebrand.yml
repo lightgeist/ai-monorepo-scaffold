@@ -1,0 +1,50 @@
+name: inknote rebrand verification
+on:
+  push:
+    branches: ['inknote/rebrand-20260927']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: inknote-rebrand-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  baseline:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch exact upstream with original history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inknote-output
+          git clone https://github.com/Altimor/flo-state.git upstream
+          git -C upstream checkout --detach 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
+          test "$(git -C upstream rev-parse HEAD)" = 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
+          git -C upstream bundle create ../inknote-output/upstream-history.bundle --all
+          git -C upstream archive --format=zip --output=../inknote-output/upstream-source.zip HEAD
+          sw_vers > inknote-output/environment.txt
+          swift --version >> inknote-output/environment.txt
+          xcodebuild -version >> inknote-output/environment.txt
+      - name: Archive immutable source immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: inknote-upstream-source
+          path: inknote-output/
+          retention-days: 30
+      - name: Baseline unit and parity tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd upstream
+          swift test 2>&1 | tee ../inknote-output/upstream-tests.log
+      - name: Archive baseline test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inknote-upstream-evidence
+          path: inknote-output/
+          retention-days: 30
