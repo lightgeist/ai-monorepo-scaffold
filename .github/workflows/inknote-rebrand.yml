@@ -1,4 +1,4 @@
-name: inknote rebrand verification
+name: inknote native release gate
 on:
   push:
     branches: ['inknote/rebrand-20260927']
@@ -9,42 +9,97 @@ concurrency:
   group: inknote-rebrand-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  baseline:
-    runs-on: macos-15
-    timeout-minutes: 35
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Fetch exact upstream with original history
+      - name: Materialize pinned inknote source
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p inknote-output
-          git clone https://github.com/Altimor/flo-state.git upstream
-          git -C upstream checkout --detach 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
-          test "$(git -C upstream rev-parse HEAD)" = 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
-          git -C upstream bundle create ../inknote-output/upstream-history.bundle --all
-          git -C upstream archive --format=zip --output=../inknote-output/upstream-source.zip HEAD
-          sw_vers > inknote-output/environment.txt
-          swift --version >> inknote-output/environment.txt
-          xcodebuild -version >> inknote-output/environment.txt
-      - name: Archive immutable source immediately
-        uses: actions/upload-artifact@v4
-        with:
-          name: inknote-upstream-source
-          path: inknote-output/
-          retention-days: 30
-      - name: Baseline unit and parity tests
+          mkdir -p out/evidence/snapshots
+          git clone https://github.com/Altimor/flo-state.git inknote
+          git -C inknote checkout -b inknote 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
+          test "$(git -C inknote rev-parse HEAD)" = 1e7a0243ccafae3fdefd26ebf9b1b0643f9aedfd
+          python3 inknote-build/rebrand.py inknote
+          python3 inknote-build/unpack.py inknote
+          sw_vers > out/evidence/environment.txt
+          uname -m >> out/evidence/environment.txt
+          swift --version >> out/evidence/environment.txt
+          xcodebuild -version >> out/evidence/environment.txt
+          echo "$GITHUB_SHA" > out/evidence/build-recipe-commit.txt
+          python3 -m py_compile inknote/scripts/write-plist.py inknote/scripts/audit-release.py
+      - name: Complete XCTest suite with snapshots enabled
         shell: bash
         run: |
           set -o pipefail
-          cd upstream
-          swift test 2>&1 | tee ../inknote-output/upstream-tests.log
-      - name: Archive baseline test evidence
+          export INKNOTE_SNAP_DIR="$PWD/out/evidence/snapshots"
+          cd inknote
+          swift test 2>&1 | tee ../out/evidence/tests.log
+      - name: Build signed native app
+        shell: bash
+        run: |
+          set -o pipefail
+          cd inknote
+          ./scripts/bundle.sh 2>&1 | tee ../out/evidence/build.log
+      - name: Relocated app audit and actual native user flows
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/Installed app"
+          ditto inknote/build/inknote.app "$RUNNER_TEMP/Installed app/inknote.app"
+          mv inknote/.build-release "$RUNNER_TEMP/hidden-build-resources"
+          APP="$RUNNER_TEMP/Installed app/inknote.app"
+          python3 inknote/scripts/audit-release.py "$APP" "$PWD/out/evidence" | tee out/evidence/audit.log
+          "$APP/Contents/MacOS/InknoteApp" --acceptance-test "$PWD/out/evidence/native" 2>&1 | tee out/evidence/native.log
+          /usr/bin/codesign --verify --deep --strict "$APP"
+      - name: Package verified app and corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/Installed app/inknote.app"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "out/inknote-1.0.0-macos-$ARCH.zip"
+          mkdir -p "$RUNNER_TEMP/dmg-stage"
+          ditto "$APP" "$RUNNER_TEMP/dmg-stage/inknote.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-stage/Applications"
+          cp inknote/README.md "$RUNNER_TEMP/dmg-stage/Read me.md"
+          hdiutil create -volname inknote -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO "out/inknote-1.0.0-macos-$ARCH.dmg"
+          hdiutil verify "out/inknote-1.0.0-macos-$ARCH.dmg"
+          git -C inknote config user.name 'inknote build automation'
+          git -C inknote config user.email 'inknote-build@users.noreply.github.com'
+          git -C inknote add -A
+          git -C inknote commit -m 'Rebrand to inknote 1.0.0; preserve upstream history and add native release verification'
+          git -C inknote rev-parse HEAD > out/evidence/source-commit.txt
+          git -C inknote archive --format=zip --prefix=inknote/ --output="$PWD/out/inknote-1.0.0-source-$ARCH.zip" HEAD
+          git -C inknote bundle create "$PWD/out/inknote-1.0.0-history-$ARCH.bundle" --all
+          cp inknote/README.md inknote/NOTICE.md inknote/RELEASE.md inknote/LICENSE out/
+          cp inknote/Resources/inknote-icon.png out/evidence/
+          cd out
+          shasum -a 256 *.zip *.dmg *.bundle > SHA256SUMS.txt
+      - name: Compact failure summary
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p out/evidence
+          grep -E 'error:| failed|Executed |ACCEPTANCE |Fatal|Traceback' out/evidence/*.log > out/evidence/triage.txt || true
+      - name: Archive binaries source and verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: inknote-upstream-evidence
-          path: inknote-output/
+          name: inknote-${{ matrix.arch }}-candidate
+          path: out/
           retention-days: 30
+          if-no-files-found: error
