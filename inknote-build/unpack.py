@@ -13,3 +13,4 @@ with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as t:
         p.chmod(m.mode)
 print('Applied verified authored overlay')
 subprocess.run([sys.executable,str(kit/'fixes.py'),str(root)],check=True)
+subprocess.run([sys.executable,str(kit/'finish.py'),str(root)],check=True)
