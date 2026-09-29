@@ -1,0 +1,64 @@
+name: brightmath timer diagnosis
+on:
+  push:
+    branches: ['brightmath/delivery-20260929']
+    paths: ['.github/workflows/brightmath-clock-diagnostic.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-isolated-failure
+          run-id: 36589589080
+          github-token: '${{ github.token }}'
+          path: previous
+      - name: Read the exact failed browser state
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path('previous').rglob('error-context.md'):
+            print('PREVIOUS_CONTEXT',p,p.read_text())
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-prepared
+          run-id: 36588417221
+          github-token: '${{ github.token }}'
+          path: prepared
+      - name: Exercise the unchanged timer with observation only
+        run: |
+          set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
+          cd brightmath
+          npm ci --no-fund --no-audit > /tmp/brightmath-npm.log 2>&1
+          npx playwright install --with-deps webkit > /tmp/brightmath-browser.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('e2e/user-journeys.spec.mjs');s=p.read_text()
+          old=" await clickPastRewards(page,'#go-extra');await expect(page.locator('#screen-play')).toHaveClass(/is-active/);\n await expect(page.locator('#screen-final')).toHaveClass(/is-active/,{timeout:15000});await snap(page,info,'extra-result');"
+          new=""" page.on('console', m => { if(m.type()==='error')console.log('CONSOLE_ERROR',m.text()); });
+           await page.evaluate(()=>{
+             window.__timerTrace=[];let frames=0;function frame(){frames++;requestAnimationFrame(frame)}requestAnimationFrame(frame);
+             window.__timerObserver=setInterval(()=>{const s=window.__brightmathTest.S;window.__timerTrace.push({now:performance.now(),frames,visibility:document.visibilityState,focus:document.hasFocus(),mode:s.mode,screen:s.screen,run:s.run,extra:{...s.extra},confirm:!!s.confirm,clock:document.querySelector('#clock').textContent});if(window.__timerTrace.length>100)window.__timerTrace.shift();},250);
+           });
+           await clickPastRewards(page,'#go-extra');await expect(page.locator('#screen-play')).toHaveClass(/is-active/);
+           try { await expect(page.locator('#screen-final')).toHaveClass(/is-active/,{timeout:15000}); }
+           finally { console.log('TIMER_TRACE',JSON.stringify(await page.evaluate(()=>{clearInterval(window.__timerObserver);return window.__timerTrace;}))); }
+           await snap(page,info,'extra-result');"""
+          assert old in s,'Exact timer test must match'
+          p.write_text(s.replace(old,new))
+          PY
+          npx playwright test --project=webkit-desktop --workers=1 --repeat-each=4 --max-failures=4 --grep 'complete recorded' 2>&1 | tee evidence/timer-diagnostic.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: brightmath-timer-diagnosis
+          path: brightmath/evidence/
