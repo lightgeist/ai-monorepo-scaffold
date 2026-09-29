@@ -1,0 +1,50 @@
+name: brightmath targeted layout verification
+on:
+  push:
+    branches: ['brightmath/diagnostics-20260929']
+    paths: ['.github/workflows/brightmath-focused-v2.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-prepared
+          run-id: 36585961455
+          github-token: '${{ github.token }}'
+          path: prepared
+      - name: Use the exact built app and observe settled bounds
+        run: |
+          set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
+          cd brightmath
+          npm ci --no-fund --no-audit > /tmp/brightmath-install.log 2>&1
+          npx playwright install --with-deps firefox > /tmp/brightmath-browser-install.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('e2e/user-journeys.spec.mjs');s=p.read_text()
+          old=' const r=await page.locator(selector).boundingBox();const v=page.viewportSize();'
+          new=''' const v=page.viewportSize();
+           await expect.poll(async()=>{
+            const r=await page.locator(selector).boundingBox();
+            return !!r && r.x>=-1 && r.y>=-1 && r.x+r.width<=v.width+1 && r.y+r.height<=v.height+1;
+           },{timeout:4000,message:'Settled control bounds must fit without clipping'}).toBe(true);
+           const r=await page.locator(selector).boundingBox();'''
+          assert old in s;s=s.replace(old,new)
+          s=s.replace("await info.attach('runtime-errors'", "console.log('LAYOUT_DIAGNOSTIC',JSON.stringify(await page.evaluate(()=>({reduced:window.__brightmathTest?.S.reduced,screen:window.__brightmathTest?.S.screen,parts:['app','screen-play','stage','card','pad'].map(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect(),s=getComputedStyle(e);return{id,x:r.x,y:r.y,width:r.width,height:r.height,transform:s.transform,minHeight:s.minHeight,flex:s.flex};})})).catch(()=>null)));\n await info.attach('runtime-errors'")
+          p.write_text(s)
+          PY
+          npx playwright test --project=firefox-desktop --workers=2 --max-failures=3 2>&1 | tee evidence/focused.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: brightmath-focused-layout
+          path: brightmath/evidence/
+          retention-days: 14
