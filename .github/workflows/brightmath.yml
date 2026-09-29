@@ -9,20 +9,18 @@ concurrency:
   group: brightmath-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  qualify:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+        with: {persist-credentials: false}
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Materialize pinned source and original brightmath identity
+        with: {node-version: '22'}
+      - name: Prepare and verify the single release candidate
         run: |
           set -euo pipefail
-          git clone https://github.com/grmchn/dopa-drill.git brightmath
+          git clone --quiet https://github.com/grmchn/dopa-drill.git brightmath
           git -C brightmath checkout --detach fdacd5fc8322f251f92ddc07f13ae85ccb2263dd
           mkdir -p brightmath/evidence
           (cd brightmath && node --test tests/*.test.mjs) > brightmath/evidence/upstream-baseline.log
@@ -31,98 +29,147 @@ jobs:
           python3 brightmath-build/rebrand.py brightmath
           python3 brightmath-build/finish.py brightmath
           python3 brightmath-build/artwork-cleanup.py brightmath
+          python3 brightmath-build/release-fixes.py brightmath
           cp .github/workflows/brightmath.yml brightmath/provenance/brightmath-build-recipe/workflow.yml
           node --version > brightmath/evidence/environment.txt
           npm --version >> brightmath/evidence/environment.txt
-      - name: Build the runtime once and qualify identity and mathematics
+          cd brightmath
+          npm install --no-fund --no-audit > evidence/dependencies.log 2>&1
+          npm run build > evidence/build.log 2>&1 || { tail -60 evidence/build.log; exit 1; }
+          npm run qualify > evidence/static.log 2>&1 || { tail -60 evidence/static.log; exit 1; }
+          npm test > evidence/unit-tests.log 2>&1 || { tail -60 evidence/unit-tests.log; exit 1; }
+          tail -10 evidence/unit-tests.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib
+          root=Path('.');out=Path('../brightmath-prepared.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(root.rglob('*')):
+              if not p.is_file() or any(x in p.parts for x in ['.git','node_modules','__pycache__']):continue
+              assert p.suffix.lower() not in ['.ttf','.otf','.woff','.woff2','.ttc','.bundle'],p
+              z.write(p,str(p))
+          print('PREPARED_SHA256',hashlib.sha256(out.read_bytes()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brightmath-prepared
+          path: brightmath-prepared.zip
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: brightmath-prepare-diagnostics
+          path: brightmath/evidence/
+  browser:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {project: chromium-desktop, engine: chromium}
+          - {project: firefox-desktop, engine: firefox}
+          - {project: webkit-desktop, engine: webkit}
+          - {project: chromium-phone, engine: chromium}
+          - {project: webkit-phone, engine: webkit}
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/download-artifact@v4
+        with: {name: brightmath-prepared, path: prepared}
+      - name: Install test tooling without altering the built application
         run: |
           set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
           cd brightmath
-          npm install --no-fund --no-audit
-          npm run build | tee evidence/build.log
-          npm run qualify | tee evidence/static.log
-          npm test | tee evidence/unit-tests.log
-          npx playwright install --with-deps chromium firefox webkit
-      - name: Actual desktop and mobile browser user journeys
+          npm ci --no-fund --no-audit > evidence/test-dependencies.log 2>&1
+          npx playwright install --with-deps '${{ matrix.engine }}' > evidence/browser-install.log 2>&1 || { tail -50 evidence/browser-install.log; exit 1; }
+      - name: Real browser user journeys
         run: |
           set -o pipefail
           cd brightmath
-          npm run test:browser 2>&1 | tee evidence/browser.log
-      - uses: actions/setup-node@v4
-        if: success()
+          npx playwright test --project='${{ matrix.project }}' 2>&1 | tee evidence/browser.log
+      - name: Concise results and failure states
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          e=Path('brightmath/evidence');p=e/'browser-results.json'
+          if p.exists():
+            obj=json.loads(p.read_text());print('BROWSER_STATS',obj.get('stats'))
+            def walk(s):
+              for spec in s.get('specs',[]):
+                for t in spec.get('tests',[]):
+                  for r in t.get('results',[]):
+                    if r.get('status') not in ('passed','skipped'):print('FAILURE',spec['title'],json.dumps(r.get('errors')))
+              for sub in s.get('suites',[]):walk(sub)
+            walk(obj)
+          for p in e.glob('browser-artifacts/*/error-context.md'):print('ERROR_STATE',p.name,p.read_text()[:7000])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          node-version: '24'
+          name: brightmath-browser-${{ matrix.project }}
+          path: brightmath/evidence/
+          retention-days: 30
+  deliver:
+    needs: [prepare, browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - uses: actions/download-artifact@v4
+        with: {name: brightmath-prepared, path: prepared}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brightmath-browser-*
+          path: browser-results
+      - name: Aggregate every browser gate
+        run: |
+          set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
+          python3 brightmath-build/aggregate.py brightmath browser-results
       - name: Independent agent-browser smoke check
-        if: success()
         run: |
           set -euo pipefail
           cd brightmath
           node server.mjs dist/site > evidence/agent-browser-server.log 2>&1 &
           SERVER=$!
           trap 'kill $SERVER || true' EXIT
-          npm install --prefix "$RUNNER_TEMP/browser-agent" agent-browser@0.38.1 --no-fund --no-audit
+          npm install --prefix "$RUNNER_TEMP/browser-agent" agent-browser@0.38.1 --no-fund --no-audit > evidence/agent-browser-install.log 2>&1
           AB="$RUNNER_TEMP/browser-agent/node_modules/.bin/agent-browser"
           "$AB" --executable-path /usr/bin/google-chrome open 'http://127.0.0.1:4173/?capture' | tee evidence/agent-browser-open.txt
           "$AB" snapshot -i | tee evidence/agent-browser-snapshot.txt
           "$AB" screenshot "$PWD/evidence/agent-browser-title.png"
           "$AB" get title | tee evidence/agent-browser-title.txt
           "$AB" close
-      - name: Package exact tested source/runtime and verify archive contents
-        if: success()
+      - name: Package unchanged tested assets and verify archive readback
         run: python3 brightmath-build/package-release.py brightmath
       - uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: brightmath-1.0.0-delivery
           path: publish/
           retention-days: 90
           compression-level: 0
-          if-no-files-found: error
-      - name: Compact diagnostics
-        if: always()
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-          e=Path('brightmath/evidence');e.mkdir(parents=True,exist_ok=True)
-          if (e/'browser-results.json').exists():
-            obj=json.loads((e/'browser-results.json').read_text()); print('BROWSER_STATS',obj.get('stats'))
-            def walk(s):
-              for spec in s.get('specs',[]):
-                for test in spec.get('tests',[]):
-                  for result in test.get('results',[]):
-                    if result.get('status') not in ('passed','skipped'):
-                      print('FAILURE',spec['title'],test.get('projectName'),json.dumps(result.get('errors')))
-              for item in s.get('suites',[]):walk(item)
-            walk(obj)
-          PY
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: brightmath-test-evidence
-          path: brightmath/evidence/
-          retention-days: 30
       - uses: actions/upload-artifact@v7
-        if: always()
         with:
-          path: brightmath/evidence/screenshots/chromium-phone-title.png
+          path: publish/brightmath-1.0.0-release-report.md
           archive: false
-          if-no-files-found: ignore
-  publish:
-    needs: qualify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: brightmath-1.0.0-delivery
-          path: publish
       - name: Publish verified release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release create brightmath-v1.0.0-20260929 publish/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'brightmath 1.0.0 — Japanese browser edition' --notes-file publish/brightmath-1.0.0-release-report.md
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: gh release create brightmath-v1.0.0-20260929 publish/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'brightmath 1.0.0 — Japanese browser edition' --notes-file publish/brightmath-1.0.0-release-report.md
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: brightmath-delivery-diagnostics
+          path: brightmath/evidence/
