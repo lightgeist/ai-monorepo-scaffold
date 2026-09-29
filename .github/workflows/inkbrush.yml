@@ -1,43 +1,135 @@
-name: inkbrush native baseline
+name: inkbrush native release qualification
 on:
   push:
     branches: ['inkbrush/rebrand-20260929']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: inkbrush-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  baseline:
+  unit:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Pin and archive pristine source
+      - name: Materialize reviewed source
         run: |
           set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          python3 inkbrush-build/unpack.py
+          git clone https://github.com/robbietilton/Compositor.git inkbrush
+          git -C inkbrush checkout -b inkbrush de442f245401e47a7eddae4b83c32737352a0b4d
+          python3 inkbrush-build/kit/rebrand.py inkbrush
+          swift inkbrush-build/kit/make-icon.swift inkbrush
           mkdir -p out
-          git clone https://github.com/robbietilton/Compositor.git source
-          git -C source checkout --detach de442f245401e47a7eddae4b83c32737352a0b4d
-          git -C source archive --format=zip --output=../out/upstream-source.zip HEAD
-          git -C source bundle create ../out/upstream-history.bundle --all
           sw_vers > out/environment.txt
-          uname -m >> out/environment.txt
           xcodebuild -version >> out/environment.txt
-          ls /Applications >> out/environment.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: inkbrush-upstream-source
-          path: out/
-          retention-days: 30
-      - name: Pristine build and project inventory
+          echo "$GITHUB_SHA" > out/build-recipe-commit.txt
+      - name: Build complete inherited test suite
+        id: compile
         run: |
           set -o pipefail
-          xcodebuild -list -project source/Compositor.xcodeproj 2>&1 | tee out/targets.log
-          xcodebuild -project source/Compositor.xcodeproj -scheme Compositor -configuration Release -derivedDataPath "$RUNNER_TEMP/baseline-build" CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build 2>&1 | tee out/baseline-build.log
-      - uses: actions/upload-artifact@v4
+          xcodebuild build-for-testing -project inkbrush/Inkbrush.xcodeproj -scheme Inkbrush -destination 'platform=macOS,arch=arm64' -configuration Debug -derivedDataPath "$RUNNER_TEMP/unit-data" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' 2>&1 | tee out/build-tests.log
+      - name: Run core tests in parallel
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -project inkbrush/Inkbrush.xcodeproj -scheme Inkbrush -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/unit-data" -resultBundlePath "$PWD/out/ParallelResults.xcresult" -parallel-testing-enabled YES -parallel-testing-worker-count 2 -skip-testing:InkbrushTests/FloatingPanelTests -skip-testing:InkbrushTests/SliderSnapTests 2>&1 | tee out/core-tests.log
+      - name: Run native window tests serially
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -project inkbrush/Inkbrush.xcodeproj -scheme Inkbrush -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/unit-data" -resultBundlePath "$PWD/out/SerialResults.xcresult" -parallel-testing-enabled NO -only-testing:InkbrushTests/FloatingPanelTests -only-testing:InkbrushTests/SliderSnapTests 2>&1 | tee out/window-tests.log
+      - name: Summarize actual outcomes
+        if: always()
+        run: |
+          for kind in Parallel Serial; do
+            if test -d "out/${kind}Results.xcresult"; then python3 inkbrush-build/kit/qualify.py summary "out/${kind}Results.xcresult" "out/${kind}-summary.json"; fi
+          done
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: inkbrush-baseline-evidence
+          name: inkbrush-unit-evidence
+          path: out/
+          retention-days: 30
+  release:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Materialize reviewed source
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          python3 inkbrush-build/unpack.py
+          git clone https://github.com/robbietilton/Compositor.git inkbrush
+          git -C inkbrush checkout -b inkbrush de442f245401e47a7eddae4b83c32737352a0b4d
+          python3 inkbrush-build/kit/rebrand.py inkbrush
+          swift inkbrush-build/kit/make-icon.swift inkbrush
+          mkdir -p out/evidence
+          sw_vers > out/evidence/environment.txt
+          xcodebuild -version >> out/evidence/environment.txt
+          echo "$GITHUB_SHA" > out/evidence/build-recipe-commit.txt
+      - name: Build native UI runner and actual Release application
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project inkbrush/Inkbrush.xcodeproj -scheme InkbrushUI -destination 'platform=macOS,arch=arm64' -configuration Debug -derivedDataPath "$RUNNER_TEMP/ui-data" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' 2>&1 | tee out/evidence/ui-build.log
+          xcodebuild build -project inkbrush/Inkbrush.xcodeproj -scheme Inkbrush -destination 'platform=macOS,arch=arm64' -configuration Release -derivedDataPath "$RUNNER_TEMP/release-data" CODE_SIGNING_ALLOWED=NO 2>&1 | tee out/evidence/release-build.log
+      - name: Package, mount and install the actual DMG
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/release-data/Build/Products/Release/inkbrush.app"
+          cp inkbrush/LICENSE inkbrush/NOTICE.md "$APP/Contents/Resources/"
+          codesign --force --sign - --options runtime --entitlements inkbrush/Config/Inkbrush.entitlements "$APP"
+          codesign --verify --deep --strict "$APP"
+          mkdir -p "$RUNNER_TEMP/dmg-stage" "$RUNNER_TEMP/Installed inkbrush"
+          ditto "$APP" "$RUNNER_TEMP/dmg-stage/inkbrush.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-stage/Applications"
+          cp inkbrush/README.md "$RUNNER_TEMP/dmg-stage/Read me.md"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" out/inkbrush-1.0.0-macos-arm64.zip
+          hdiutil create -volname inkbrush -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO out/inkbrush-1.0.0-macos-arm64.dmg
+          hdiutil verify out/inkbrush-1.0.0-macos-arm64.dmg
+          hdiutil attach out/inkbrush-1.0.0-macos-arm64.dmg -readonly -nobrowse -mountpoint "$RUNNER_TEMP/inkbrush-mounted"
+          ditto "$RUNNER_TEMP/inkbrush-mounted/inkbrush.app" "$RUNNER_TEMP/Installed inkbrush/inkbrush.app"
+          hdiutil detach "$RUNNER_TEMP/inkbrush-mounted"
+          python3 inkbrush/scripts/qualify.py compare "$APP" "$RUNNER_TEMP/Installed inkbrush/inkbrush.app" | tee out/evidence/dmg-install-compare.txt
+          mv "$RUNNER_TEMP/release-data" "$RUNNER_TEMP/hidden-release-build"
+      - name: Audit independent packaged identity and security
+        run: |
+          set -o pipefail
+          python3 inkbrush/scripts/qualify.py audit "$RUNNER_TEMP/Installed inkbrush/inkbrush.app" "$PWD/out/evidence" | tee out/evidence/audit.log
+          python3 inkbrush/scripts/qualify.py target-ui "$RUNNER_TEMP/ui-data/Build/Products" "$RUNNER_TEMP/Installed inkbrush/inkbrush.app" "$PWD/out/evidence"
+      - name: Real native user journeys on installed Release app
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -xctestrun "$PWD/out/evidence/installed-ui.xctestrun" -destination 'platform=macOS,arch=arm64' -resultBundlePath "$PWD/out/evidence/UIResults.xcresult" -parallel-testing-enabled NO 2>&1 | tee out/evidence/native-ui.log
+          codesign --verify --deep --strict "$RUNNER_TEMP/Installed inkbrush/inkbrush.app"
+      - name: Archive corresponding source and original history
+        run: |
+          set -euo pipefail
+          git -C inkbrush config user.name 'inkbrush build automation'
+          git -C inkbrush config user.email 'inkbrush-build@users.noreply.github.com'
+          git -C inkbrush add -A
+          git -C inkbrush commit -m 'Rebrand Compositor 1.4 to inkbrush 1.0.0; preserve original history and MIT license'
+          git -C inkbrush rev-parse HEAD > out/evidence/source-commit.txt
+          git -C inkbrush archive --format=zip --prefix=inkbrush/ --output="$PWD/out/inkbrush-1.0.0-source.zip" HEAD
+          git -C inkbrush bundle create "$PWD/out/inkbrush-1.0.0-history.bundle" --all
+          cp inkbrush/README.md inkbrush/NOTICE.md inkbrush/LICENSE out/
+          cp inkbrush/inkbrush-icon.png out/evidence/
+          cd out && shasum -a 256 *.zip *.dmg *.bundle > SHA256SUMS.txt
+      - name: Summarize native UI result
+        if: always()
+        run: |
+          if test -d out/evidence/UIResults.xcresult; then python3 inkbrush-build/kit/qualify.py summary out/evidence/UIResults.xcresult out/evidence/UI-summary.json; fi
+          grep -E 'error:| failed|Executed|Test Suite|TEST .*FAILED|Testing failed' out/evidence/*.log > out/evidence/triage.txt || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: inkbrush-release-candidate
           path: out/
           retention-days: 30
