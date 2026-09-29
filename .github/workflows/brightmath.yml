@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: brightmath-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   qualify:
     runs-on: ubuntu-24.04
@@ -27,6 +27,7 @@ jobs:
           mkdir -p brightmath/evidence
           (cd brightmath && node --test tests/*.test.mjs) > brightmath/evidence/upstream-baseline.log
           python3 brightmath-build/prepare.py
+          python3 brightmath-build/screenshot-fix.py
           python3 brightmath-build/rebrand.py brightmath
           python3 brightmath-build/finish.py brightmath
           python3 brightmath-build/artwork-cleanup.py brightmath
@@ -101,6 +102,12 @@ jobs:
           name: brightmath-test-evidence
           path: brightmath/evidence/
           retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          path: brightmath/evidence/screenshots/chromium-phone-title.png
+          archive: false
+          if-no-files-found: ignore
   publish:
     needs: qualify
     runs-on: ubuntu-24.04
