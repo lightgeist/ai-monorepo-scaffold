@@ -1,0 +1,54 @@
+name: brightmath baseline
+on:
+  push:
+    branches: ['brightmath/rebrand-20260929']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Freeze source and run inherited tests
+        run: |
+          set -euo pipefail
+          git clone https://github.com/grmchn/dopa-drill.git upstream
+          git -C upstream checkout --detach fdacd5fc8322f251f92ddc07f13ae85ccb2263dd
+          mkdir -p evidence
+          node --version > evidence/environment.txt
+          cd upstream
+          node --test tests/*.test.mjs 2>&1 | tee ../evidence/baseline-tests.log
+      - name: Inspect actual animation and UI contracts
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re,json
+          root=Path('upstream')
+          print('FILES',[(str(p),p.stat().st_size) for p in (root/'tests').glob('*')])
+          for file in ['main.js','guide.js']:
+            text=(root/'app/js'/file).read_text()
+            print('MEMBERS',file,sorted(set(re.findall(r'\b(?:hero|actor|m|c)\.([A-Za-z_$][\w$]*)',text))))
+            print('ACTOR CALLS',file)
+            for n,line in enumerate(text.splitlines(),1):
+              if re.search(r'\b(?:hero|actor)\.|new Dopakichi|dopakichiSVG|COSTUMES',line):print(n,line)
+          s=(root/'app/js/dopakichi.js').read_text()
+          print('CHARACTER_METHOD_SIGNATURES')
+          for n,line in enumerate(s.splitlines(),1):
+            if re.match(r'  (?:async )?(?:constructor|[A-Za-z_]\w*)\(',line):print(n,line)
+          print('TESTS_WITH_CHARACTER_REFS')
+          for p in (root/'tests').glob('*'):
+            if 'dopakichi' in p.read_text().lower():print(p,p.read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: brightmath-baseline-evidence
+          path: evidence/
+          retention-days: 30
