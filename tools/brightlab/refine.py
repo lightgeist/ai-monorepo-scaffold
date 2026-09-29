@@ -36,4 +36,10 @@ s=s.replace("await check('normal startup has no recorder or legacy globals'","aw
 s=s.replace("path:'evidence/normal-animation-motor.png'","path:'evidence/normal-animation-motor.png',timeout:90000")
 p.write_text(s)
 p=R/'package.json';pkg=json.loads(p.read_text());pkg['scripts']['test:runtime']='node tests/runtime.mjs';pkg['scripts']['eval']='npm run typecheck && npm test && npm run verify:source && npm run build && npm run verify:dist && BASE=/school/brightlab/ vite build --outDir dist-subpath && BASE=/school/brightlab/ node tools/verify.mjs dist dist-subpath && SUBPATH_DIST=dist-subpath npm run test:browser && npm run test:runtime';p.write_text(json.dumps(pkg,indent=2)+'\n')
-print('Pump help/tour restored; verifier waits for completed GPU work; isolated browser phases available.')
+# Keep pump actions in a separate row: otherwise they can intercept the Exploded control.
+p=R/'index.html';s=p.read_text();start=s.index('<aside class="panel" id="panel-pump"');end=s.index('</aside>',start)
+section=s[start:end];icons=re.search(r'<div class="icons">.*?</div>',section,re.S)[0]
+section=section.replace(icons,'')+'        <div class="row pump-actions">'+icons+'</div>\n      '
+s=s[:start]+section+s[end:];p.write_text(s)
+with (R/'src/style.css').open('a') as f:f.write('\n#panel-pump .pump-actions { justify-content: flex-end; }\n')
+print('Pump help/tour restored in a separate row; verifier waits for completed GPU work; isolated browser phases available.')
