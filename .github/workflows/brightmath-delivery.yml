@@ -1,0 +1,190 @@
+name: brightmath verified delivery
+on:
+  push:
+    branches: ['brightmath/delivery-20260929']
+    paths: ['.github/workflows/brightmath-delivery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  webkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-prepared
+          run-id: 36588417221
+          github-token: '${{ github.token }}'
+          path: prepared
+      - name: Install test tools on the unchanged candidate
+        run: |
+          set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
+          cd brightmath
+          npm ci --no-fund --no-audit > evidence/isolated-dependencies.log 2>&1
+          npx playwright install --with-deps webkit > evidence/isolated-browser-install.log 2>&1
+      - name: Run every WebKit desktop journey in isolation
+        run: |
+          set -o pipefail
+          cd brightmath
+          npx playwright test --project=webkit-desktop --workers=1 2>&1 | tee evidence/isolated-webkit.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,shutil
+          obj=json.loads(Path('evidence/browser-results.json').read_text());s=obj['stats']
+          assert s['expected']==14 and s['unexpected']==s['skipped']==s['flaky']==0,s
+          shutil.copytree('evidence','../validated-webkit')
+          print('ISOLATED_WEBKIT_PASS',s)
+          PY
+      - name: Repeat all fourteen journeys with fresh browser processes
+        run: |
+          set -o pipefail
+          cd brightmath
+          npx playwright test --project=webkit-desktop --workers=1 2>&1 | tee evidence/repeat-webkit.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,shutil
+          obj=json.loads(Path('evidence/browser-results.json').read_text());s=obj['stats']
+          assert s['expected']==14 and s['unexpected']==s['skipped']==s['flaky']==0,s
+          out=Path('../validated-webkit/isolated-repeat');out.mkdir()
+          shutil.copy2('evidence/browser-results.json',out/'results.json')
+          shutil.copy2('evidence/repeat-webkit.log',out/'browser.log')
+          print('REPEATED_WEBKIT_PASS',s)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: brightmath-isolated-webkit
+          path: validated-webkit/
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: brightmath-isolated-failure
+          path: brightmath/evidence/
+  deliver:
+    needs: webkit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Require every other browser to have passed on the exact source
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          python3 - <<'PY'
+          import json,os,time,urllib.request
+          from pathlib import Path
+          base='https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+          run=get('/actions/runs/36588417221')
+          assert run['head_sha']=='13b50b328cd49ce38c11266ebaca26dcc39615d4'
+          wanted={'prepare','browser (chromium-desktop, chromium)','browser (chromium-phone, chromium)','browser (firefox-desktop, firefox)','browser (webkit-phone, webkit)'}
+          for attempt in range(60):
+              jobs=get('/actions/runs/36588417221/jobs')['jobs']
+              selected=[j for j in jobs if j['name'] in wanted]
+              assert len(selected)==5
+              if all(j['status']=='completed' for j in selected):
+                  assert all(j['conclusion']=='success' for j in selected),[(j['name'],j['conclusion']) for j in selected]
+                  break
+              time.sleep(15)
+          else:raise RuntimeError('Other browser qualification did not finish within the bounded wait')
+          Path('qualification-inputs.json').write_text(json.dumps({'source_recipe_commit':run['head_sha'],'source_run':run['html_url'],'accepted_original_jobs':[{'name':j['name'],'conclusion':j['conclusion'],'url':j['html_url']} for j in selected],'superseded_webkit_job':109475051961,'reason':'Two pages/test-browser contexts closed unexpectedly; all fourteen WebKit desktop journeys rerun serially twice, without modifying application files. Original failure record retained.'},indent=2)+'\n')
+          print('ORIGINAL_BROWSER_GATES_PASSED')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-prepared
+          run-id: 36588417221
+          github-token: '${{ github.token }}'
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brightmath-browser-*
+          run-id: 36588417221
+          github-token: '${{ github.token }}'
+          path: browser-results
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-isolated-webkit
+          path: isolated-webkit
+      - name: Preserve failed-run evidence and aggregate all five qualified browser configurations
+        run: |
+          set -euo pipefail
+          mkdir brightmath
+          unzip -q prepared/brightmath-prepared.zip -d brightmath
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil
+          root=Path('brightmath');e=root/'evidence'
+          runtime={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for base in ('app','dist') for p in (root/base).rglob('*') if p.is_file()}
+          Path('runtime-hashes.json').write_text(json.dumps(runtime,sort_keys=True))
+          previous=Path('browser-results/brightmath-browser-webkit-desktop')
+          shutil.copytree(previous,e/'prior-webkit-attempt')
+          shutil.rmtree(previous)
+          shutil.copytree('isolated-webkit',previous)
+          shutil.copy2('qualification-inputs.json',e/'qualification-inputs.json')
+          shutil.copy2('.github/workflows/brightmath-delivery.yml',root/'provenance/delivery-workflow.yml')
+          PY
+          python3 brightmath-build/aggregate.py brightmath browser-results
+      - name: Independent agent-browser smoke check
+        run: |
+          set -euo pipefail
+          cd brightmath
+          node server.mjs dist/site > evidence/agent-browser-server.log 2>&1 &
+          SERVER=$!
+          trap 'kill $SERVER || true' EXIT
+          npm install --prefix "$RUNNER_TEMP/browser-agent" agent-browser@0.38.1 --no-fund --no-audit > evidence/agent-browser-install.log 2>&1
+          AB="$RUNNER_TEMP/browser-agent/node_modules/.bin/agent-browser"
+          "$AB" --executable-path /usr/bin/google-chrome open 'http://127.0.0.1:4173/?capture' | tee evidence/agent-browser-open.txt
+          "$AB" snapshot -i | tee evidence/agent-browser-snapshot.txt
+          "$AB" screenshot "$PWD/evidence/agent-browser-title.png"
+          "$AB" get title | tee evidence/agent-browser-title.txt
+          "$AB" close
+      - name: Package exact qualified files with explicit source and retry provenance
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          for name,wanted in json.loads(Path('runtime-hashes.json').read_text()).items():
+              assert hashlib.sha256((Path('brightmath')/name).read_bytes()).hexdigest()==wanted,name
+          p=Path('brightmath-build/package-release.py');s=p.read_text()
+          a="'recipe_commit':os.environ['GITHUB_SHA']"
+          assert a in s;s=s.replace(a,"'recipe_commit':'13b50b328cd49ce38c11266ebaca26dcc39615d4','delivery_recipe_commit':os.environ['GITHUB_SHA']")
+          a="(stage/'START-HERE.md').write_text(report)"
+          b="report += '\\n## Qualification retry record\\n\\nThe application files were built once in source run 36588417221. Four browser configurations passed there. WebKit desktop had two unexpected page/context closures; that failure is retained under evidence/prior-webkit-attempt. All fourteen WebKit desktop journeys then passed twice using one worker and fresh browser processes, with no application changes. The canonical five-configuration total is 70 passed journeys; an additional 14-passed repeat is retained separately. This is not a claim that every historical test attempt passed. Source recipe 13b50b328cd49ce38c11266ebaca26dcc39615d4 and this delivery workflow are recorded separately. Runtime file hashes were rechecked before packaging.\\n'\n"+a
+          assert a in s;s=s.replace(a,b)
+          p.write_text(s)
+          PY
+          python3 brightmath-build/package-release.py brightmath
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brightmath-1.0.0-delivery
+          path: publish/
+          retention-days: 90
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          path: publish/brightmath-1.0.0-release-report.md
+          archive: false
+      - name: Publish verified release
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: gh release create brightmath-v1.0.0-20260929 publish/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'brightmath 1.0.0 — Japanese browser edition' --notes-file publish/brightmath-1.0.0-release-report.md
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: brightmath-delivery-diagnostics
+          path: brightmath/evidence/
