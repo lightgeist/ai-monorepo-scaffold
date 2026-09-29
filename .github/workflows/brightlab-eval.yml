@@ -7,7 +7,7 @@ permissions:
   contents: write
 concurrency:
   group: brightlab-rebrand
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -19,29 +19,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Import pinned upstream and apply BrightLab identity
+      - name: Import pinned upstream outside the existing pnpm workspace
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p apps
-          rm -rf apps/brightlab
-          git clone https://github.com/AirsupHQ/airsup-lab.git apps/brightlab
-          git -C apps/brightlab checkout --detach e21864bda5a614ffae8d0a835518be8e2e571dce
-          test "$(git -C apps/brightlab rev-parse HEAD)" = e21864bda5a614ffae8d0a835518be8e2e571dce
-          rm -rf apps/brightlab/.git
-          cd apps/brightlab
+          mkdir -p standalone
+          rm -rf standalone/brightlab
+          git clone https://github.com/AirsupHQ/airsup-lab.git standalone/brightlab
+          git -C standalone/brightlab checkout --detach e21864bda5a614ffae8d0a835518be8e2e571dce
+          test "$(git -C standalone/brightlab rev-parse HEAD)" = e21864bda5a614ffae8d0a835518be8e2e571dce
+          rm -rf standalone/brightlab/.git
+          cd standalone/brightlab
           npm ci
           cd ../..
-          python tools/brightlab/import.py apps/brightlab
-          cp -a tools/brightlab/overlay/. apps/brightlab/
-          cd apps/brightlab
+          python tools/brightlab/import.py standalone/brightlab
+          cp -a tools/brightlab/overlay/. standalone/brightlab/
+          python tools/brightlab/refine.py standalone/brightlab
+          cd standalone/brightlab
           npm install --save-dev --save-exact playwright@1.56.1
           rm -rf node_modules
           npm ci
           npx playwright install --with-deps chromium
           mkdir -p evidence
       - name: Type, unit, source and root/subpath build gates
-        working-directory: apps/brightlab
+        working-directory: standalone/brightlab
         shell: bash
         run: |
           set -euo pipefail
@@ -54,13 +55,19 @@ jobs:
           BASE=/school/brightlab/ node tools/verify.mjs dist dist-subpath | tee evidence/subpath-gates.json
           npm audit --json > evidence/dependency-audit.json
       - name: Execute browser journeys and negative controls
-        working-directory: apps/brightlab
+        working-directory: standalone/brightlab
         shell: bash
         run: |
           set -euo pipefail
-          SUBPATH_DIST=dist-subpath npm run test:browser 2>&1 | tee evidence/browser.log
-      - name: Verify clean extraction reproduces the build
-        working-directory: apps/brightlab
+          SUBPATH_DIST=dist-subpath timeout --signal=TERM --kill-after=15s 600s node tests/browser.mjs 2>&1 | tee evidence/browser.log
+      - name: Verify normal playback independently of fixed-step mode
+        working-directory: standalone/brightlab
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 240s node tests/runtime.mjs 2>&1 | tee evidence/runtime.log
+      - name: Rebuild the artifact byte for byte
+        working-directory: standalone/brightlab
         shell: bash
         run: |
           set -euo pipefail
@@ -77,27 +84,29 @@ jobs:
           test "$GITHUB_REF_NAME" = brightlab/rebrand-20260929
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add apps/brightlab
+          git add standalone/brightlab
           git diff --cached --quiet || git commit -m 'feat(brightlab): publish verified BrightLab 1.0.0 source'
           git push origin HEAD:refs/heads/brightlab/rebrand-20260929
-          git rev-parse HEAD > apps/brightlab/evidence/source-commit.txt
-          git ls-remote origin refs/heads/main > apps/brightlab/evidence/main-ref.txt
+          git rev-parse HEAD > standalone/brightlab/evidence/source-commit.txt
+          git ls-remote origin refs/heads/main > standalone/brightlab/evidence/main-ref.txt
       - name: Package source, runnable site and executed evidence
         env:
           RUN_URL: https://github.com/lightgeist/ai-monorepo-scaffold/actions/runs/${{ github.run_id }}
-        run: python tools/brightlab/package.py
+        run: |
+          sed 's@apps/brightlab@standalone/brightlab@g' tools/brightlab/package.py > /tmp/brightlab-package.py
+          python /tmp/brightlab-package.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: brightlab-evaluation-${{ github.run_id }}
           path: |
-            apps/brightlab/evidence/
-            apps/brightlab/src/
-            apps/brightlab/index.html
-            apps/brightlab/package*.json
-            apps/brightlab/tests/
-            apps/brightlab/tools/
-            apps/brightlab/dist/
+            standalone/brightlab/evidence/
+            standalone/brightlab/src/
+            standalone/brightlab/index.html
+            standalone/brightlab/package*.json
+            standalone/brightlab/tests/
+            standalone/brightlab/tools/
+            standalone/brightlab/dist/
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: success()
