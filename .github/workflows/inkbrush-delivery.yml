@@ -1,0 +1,176 @@
+name: inkbrush verified delivery
+on:
+  push:
+    branches: ['inkbrush/delivery-20260929']
+    paths: ['.github/workflows/inkbrush-delivery.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify provenance and assemble the already tested release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, plistlib, shutil, subprocess, urllib.request, zipfile
+          P=pathlib.Path
+          repo=os.environ['GITHUB_REPOSITORY']
+          base=f'https://api.github.com/repos/{repo}'
+          run_id=36519949995
+          commit='3e61241f7363a47279e1ac3cb06f0a8a175fdddd'
+          def get(path, raw=False):
+              request=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','User-Agent':'inkbrush-verified-delivery'})
+              with urllib.request.urlopen(request,timeout=120) as response:
+                  data=response.read()
+              return data if raw else json.loads(data)
+          run=get(f'/actions/runs/{run_id}')
+          assert run['conclusion']=='success' and run['head_sha']==commit
+          jobs=get(f'/actions/runs/{run_id}/jobs')['jobs']
+          assert {j['name'] for j in jobs}=={'unit','release'}
+          assert all(j['conclusion']=='success' for j in jobs)
+          stage=P('delivery'); stage.mkdir()
+          canonical=P('publish'); canonical.mkdir()
+          inputs=P('inputs'); inputs.mkdir()
+          records=[]
+          spec=[('release',11012951038,'1cc92fd5086b345f28cbe0c426249fe0614d606cb53c46fd9963a62aa2aa1162'),('unit',11012995381,'dfeadcd955b2fff909de170cee6f2d05b755086439d6eab7286810b13643ee65')]
+          for kind,aid,expected in spec:
+              meta=get(f'/actions/artifacts/{aid}')
+              assert not meta['expired']
+              assert meta['workflow_run']['id']==run_id and meta['workflow_run']['head_sha']==commit
+              archive=get(f'/actions/artifacts/{aid}/zip',raw=True)
+              assert hashlib.sha256(archive).hexdigest()==expected,(kind,'artifact hash mismatch')
+              dest=inputs/(kind+'.zip'); dest.write_bytes(archive)
+              records.append({'name':kind,'artifact_id':aid,'sha256':expected,'bytes':len(archive)})
+              with zipfile.ZipFile(dest) as z:
+                  assert z.testzip() is None
+                  for item in z.infolist():
+                      rel=P(item.filename)
+                      assert not rel.is_absolute() and '..' not in rel.parts
+                      if item.is_dir() or any(part.endswith('.xcresult') for part in rel.parts):continue
+                      target=(stage/rel) if kind=='release' else (stage/'evidence/unit'/rel)
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(z.read(item))
+          required=['inkbrush-1.0.0-macos-arm64.zip','inkbrush-1.0.0-macos-arm64.dmg','inkbrush-1.0.0-source.zip','inkbrush-1.0.0-history.bundle']
+          for name in required:assert (stage/name).is_file(),name
+          for line in (stage/'SHA256SUMS.txt').read_text().splitlines():
+              expected,name=line.split(None,1);name=name.lstrip('*').strip()
+              assert hashlib.sha256((stage/name).read_bytes()).hexdigest()==expected,name
+          with zipfile.ZipFile(stage/required[0]) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              name=next(n for n in names if n.endswith('.app/Contents/Info.plist') and not n.startswith('__MACOSX/'))
+              info=plistlib.loads(z.read(name))
+              assert info['CFBundleIdentifier']=='app.inkbrush.mac'
+              assert info['CFBundleShortVersionString']=='1.0.0'
+          with zipfile.ZipFile(stage/required[2]) as z:
+              assert z.testzip() is None
+              assert any(n.endswith('/LICENSE') for n in z.namelist())
+              print('SOURCE_DOCUMENTATION_BEGIN')
+              print(z.read('inkbrush/README.md').decode()[:18000])
+              print('SOURCE_DOCUMENTATION_END')
+          P('bundle-check').mkdir()
+          subprocess.run(['git','init','-q','bundle-check'],check=True)
+          checked=subprocess.run(['git','-C','bundle-check','bundle','verify',str((stage/required[3]).resolve())],capture_output=True,text=True,check=True)
+          (stage/'evidence/git-bundle-verification.txt').write_text(checked.stdout+checked.stderr)
+          summaries={}
+          for p in sorted((stage/'evidence').rglob('*summary.json')):
+              obj=json.loads(p.read_text());summaries[str(p.relative_to(stage))]=obj
+              print('TEST_SUMMARY',str(p.relative_to(stage)),json.dumps(obj))
+          assert len(summaries)>=3,'Missing test summaries'
+          for name,obj in summaries.items():
+              if isinstance(obj,dict):
+                  if 'failedTests' in obj: assert obj['failedTests']==0,name
+                  if 'testFailures' in obj: assert not obj['testFailures'],name
+          audit_files=[]
+          for p in sorted((stage/'evidence').glob('*.json')):
+              if 'summary' not in p.name:
+                  value=json.loads(p.read_text())
+                  print('AUDIT',p.name,json.dumps(value)[:24000])
+                  audit_files.append(p.name)
+          source_sha=(stage/'evidence/source-commit.txt').read_text().strip()
+          native_files=[str(p.relative_to(stage)) for p in sorted((stage/'evidence').rglob('*')) if p.is_file() and p.suffix.lower() in ('.png','.jpg','.jpeg')]
+          manifest={'name':'inkbrush','version':'1.0.0','distribution':'ad-hoc-signed, non-notarized native preview','architecture':'arm64','minimum_macos':info.get('LSMinimumSystemVersion'),'bundle_identifier':info['CFBundleIdentifier'],'upstream':'robbietilton/Compositor','upstream_commit':'de442f245401e47a7eddae4b83c32737352a0b4d','build_recipe_commit':commit,'source_commit':source_sha,'qualified_run':run['html_url'],'jobs':[{'name':j['name'],'conclusion':j['conclusion'],'url':j['html_url']} for j in jobs],'input_artifacts':records,'test_summaries':summaries,'images':native_files,'assembly':'Existing verified app ZIP and DMG retained byte-for-byte. No recompilation or resigning during delivery.'}
+          (stage/'VERIFICATION.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          report='''# inkbrush 1.0.0 — delivery and verification
+
+          Native Apple-silicon macOS application, rebranded from the pinned Compositor 1.4 source.
+          This is an ad-hoc-signed, non-notarized preview. Apple Developer ID signing and notarization are not claimed.
+          Minimum system: macOS 26.0, Apple silicon. No Intel build is claimed.
+
+          ## Install
+          Open inkbrush-1.0.0-macos-arm64.dmg and move inkbrush.app to Applications, or extract the app ZIP.
+          Keep the source and evidence for rebuilding and auditing. The main package retains the tested application archives without modifying them.
+
+          ## Verified execution
+          Both unit and release jobs passed in the qualified run below. The release job built the Release app, signed it ad hoc, created and verified a DMG, mounted it, copied the app out, compared the installed files, hid the build directory, audited identity/security, and ran native XCTest user journeys against the installed Release app.
+          The inherited core tests and the separate native-window tests passed. Exact counts and skips are in VERIFICATION.json and the Xcode summary JSON files; no test-count estimate is used here.
+          GUI journeys include canvas creation, navigation, layers, painting, save, export, legacy project opening, unsaved-close cancellation, and operating-system file delivery after restart. Consult the native-ui evidence and test source for exact assertions.
+
+          ## Package contents
+          App ZIP and DMG; corresponding source ZIP; original and derivative Git history bundle; README and MIT notice; native UI screenshots and saved test outputs; build and test logs; structured Xcode summaries; checksum manifest.
+          Large raw .xcresult recordings are provided separately as raw-unit-results.zip and raw-release-results.zip. Their original GitHub artifact hashes are in VERIFICATION.json.
+
+          ## Reproducibility
+          Source: robbietilton/Compositor at de442f245401e47a7eddae4b83c32737352a0b4d.
+          Qualified build recipe: 3e61241f7363a47279e1ac3cb06f0a8a175fdddd.
+          Qualified run: https://github.com/lightgeist/ai-monorepo-scaffold/actions/runs/36519949995
+          Delivery assembles this already-tested output; it does not rerun or substitute a different build.
+          Both input artifact SHA-256 hashes, the archive checksums, and Git history were independently verified during assembly.
+
+          ## Limits
+          Automated native tests are not a claim of a person manually using every feature. No exhaustive compatibility, accessibility, long-duration use, Gatekeeper approval, or notarized update qualification is claimed.
+          The upstream updater is not used for this independent preview. Preserve existing documents and backups when trying a new editor.
+          '''
+          report='\n'.join(line[10:] if line.startswith('          ') else line for line in report.splitlines())+'\n'
+          (stage/'START-HERE.md').write_text(report)
+          (stage/'SHA256SUMS.txt').unlink()
+          files=sorted(p for p in stage.rglob('*') if p.is_file())
+          sums=''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+str(p.relative_to(stage))+'\n' for p in files)
+          (stage/'SHA256SUMS.txt').write_text(sums)
+          package=canonical/'inkbrush-1.0.0-complete.zip'
+          with zipfile.ZipFile(package,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+              for p in sorted(stage.rglob('*')):
+                  if p.is_file():z.write(p,str(P('inkbrush-1.0.0')/p.relative_to(stage)))
+          with zipfile.ZipFile(package) as z:
+              assert z.testzip() is None
+              for line in sums.splitlines():
+                  expected,name=line.split('  ',1)
+                  assert hashlib.sha256(z.read('inkbrush-1.0.0/'+name)).hexdigest()==expected
+          for name in required: shutil.copy2(stage/name,canonical/name)
+          shutil.copy2(stage/'START-HERE.md',canonical/'inkbrush-1.0.0-release-report.md')
+          shutil.copy2(stage/'VERIFICATION.json',canonical/'inkbrush-1.0.0-verification.json')
+          receipt={'file':package.name,'bytes':package.stat().st_size,'sha256':hashlib.sha256(package.read_bytes()).hexdigest(),'md5':hashlib.md5(package.read_bytes()).hexdigest(),'checked_payload_files':len(files),'checked_input_artifacts':records,'qualified_run':run['html_url'],'delivery_run':f'https://github.com/{repo}/actions/runs/'+os.environ['GITHUB_RUN_ID'],'original_binary_archives_unchanged':True}
+          (canonical/'inkbrush-1.0.0-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+          shutil.copy2(inputs/'unit.zip',canonical/'raw-unit-results.zip')
+          shutil.copy2(inputs/'release.zip',canonical/'raw-release-results.zip')
+          print('DELIVERY_RECEIPT',json.dumps(receipt))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write(report+'\n## Receipt\n```json\n'+json.dumps(receipt,indent=2)+'\n```\n')
+          PY
+      - name: Archive complete delivery package
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkbrush-1.0.0-delivery
+          path: |
+            publish/inkbrush-1.0.0-complete.zip
+            publish/inkbrush-1.0.0-release-report.md
+            publish/inkbrush-1.0.0-verification.json
+            publish/inkbrush-1.0.0-receipt.json
+          retention-days: 90
+          compression-level: 0
+      - name: Publish durable preview downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create inkbrush-v1.0.0-preview-20260929 publish/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'inkbrush 1.0.0 — native macOS preview' --notes-file publish/inkbrush-1.0.0-release-report.md
