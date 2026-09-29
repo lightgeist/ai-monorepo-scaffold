@@ -1,0 +1,50 @@
+name: BrightLab baseline audit
+on:
+  push:
+    branches: ['brightlab/rebrand-20260929']
+    paths: ['.github/workflows/brightlab-audit.yml']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Fetch pinned public upstream
+        run: |
+          git clone https://github.com/AirsupHQ/airsup-lab.git source
+          cd source
+          git checkout --detach e21864bda5a614ffae8d0a835518be8e2e571dce
+          test "$(git rev-parse HEAD)" = e21864bda5a614ffae8d0a835518be8e2e571dce
+          mkdir -p ../evidence
+          git ls-tree -r HEAD > ../evidence/upstream-tree.txt
+          grep -RniE 'airsup|the.lab|wordmark|brand|localStorage|sessionStorage|https?://' src index.html public/*.svg tools vite.config.* > ../evidence/identity-audit.txt || true
+      - name: Baseline build and type check
+        run: |
+          set -o pipefail
+          cd source
+          npm ci 2>&1 | tee ../evidence/baseline-install.log
+          npm run typecheck 2>&1 | tee ../evidence/baseline-typecheck.log
+          npm run build 2>&1 | tee ../evidence/baseline-build.log
+          npm audit --json > ../evidence/baseline-audit.json || true
+      - name: Prepare test dependencies
+        run: |
+          cd source
+          npm install --no-save --package-lock=false playwright@1.56.1
+          mkdir -p ../workspace
+          tar --exclude='*.woff' --exclude='*.woff2' --exclude='*.ttf' --exclude='*.otf' --exclude='*.eot' -czf ../workspace/dependencies.tar.gz node_modules
+          rm -rf node_modules dist .git public/fonts
+          cp -a . ../workspace/source
+          cp -a ../evidence ../workspace/evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: brightlab-baseline-workspace
+          path: |
+            workspace/
+            evidence/
+          include-hidden-files: true
+          retention-days: 7
