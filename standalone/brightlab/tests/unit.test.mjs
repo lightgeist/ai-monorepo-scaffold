@@ -1,0 +1,58 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import ts from 'typescript';
+import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {identityLeaks,checkModel,hash,distChecks} from '../tools/verify.mjs';
+import {createStaticServer} from '../tools/serve.mjs';
+// Pure TS modules are transpiled, not reimplemented; tests execute shipped functions.
+async function tsImport(path){const js=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;return import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));}
+const {BRAND,makeShareUrl}=await tsImport('src/brand.ts');
+const {sanitizeParams}=await tsImport('src/params.ts');
+const {EXHIBITS,PATHS,exhibitFromPath,onChange,changed}=await tsImport('src/state.ts');
+const {FUSION}=await tsImport('src/fusion/physics.ts');
+const {load,launchAccel,TRUCK}=await tsImport('src/car/physics.ts');
+test('identity is BrightLab by BrightClass and immutable',()=>{assert.equal(BRAND.name,'BrightLab');assert.equal(BRAND.parent,'BrightClass');assert(Object.isFrozen(BRAND));assert.equal(BRAND.site,'');});
+test('all 11 upstream exhibits retained',()=>assert.deepEqual(EXHIBITS,['fusion','engine','pump','line','car','motor','robot','hole','jet','f1','drone']));
+for(const ex of ['hall',...EXHIBITS])test(`query route resolves ${ex}`,()=>assert.equal(exhibitFromPath('/unrelated',new URLSearchParams({ex})),ex));
+test('invalid exhibit safely falls back',()=>assert.equal(exhibitFromPath('/',new URLSearchParams('ex=not-a-model')),'fusion'));
+test('semantic paths use BrightLab namespace',()=>{for(const p of Object.values(PATHS))assert(p.startsWith('/brightlab'));});
+test('legacy model paths remain readable',()=>{assert.equal(exhibitFromPath('/lab/drive-unit',new URLSearchParams()),'motor');assert.equal(exhibitFromPath('/lab/turbopump',new URLSearchParams()),'pump');});
+test('share retains deployment subpath and strips debug/tracking inputs',()=>assert.equal(makeShareUrl('motor','https://school.example/brightlab/?ex=car&rec=1&token=private#bad'),'https://school.example/brightlab/?ex=motor'));
+test('configured share site keeps its subpath',()=>assert.equal(makeShareUrl('drone','https://old.example/','https://new.example/science/'),'https://new.example/science/?ex=drone'));
+test('share rejects non-web schemes',()=>{for(const u of ['javascript:alert(1)','file:///tmp/a','data:text/html,hi'])assert.throws(()=>makeShareUrl('car',u));});
+test('query sanitizer rejects NaN, infinities and empty values',()=>{for(const value of ['NaN','Infinity','-Infinity','','bad'])assert.equal(sanitizeParams(`temp=${value}`).has('temp'),false);});
+test('query sanitizer clamps valid numeric ranges',()=>{const p=sanitizeParams('temp=9999&throttle=-5&px=1&dpr=100&rpm=-99');assert.equal(p.get('temp'),'180');assert.equal(p.get('throttle'),'0.4');assert.equal(p.get('px'),'300000');assert.equal(p.get('dpr'),'3');assert.equal(p.get('rpm'),'0');});
+test('query sanitizer only allows known enum values and shots',()=>{const p=sanitizeParams('view=oops&mview=cut&shot=missing&ex=motor&rec=1&q=low',['hero']);assert.equal(p.get('view'),null);assert.equal(p.get('shot'),null);assert.equal(p.get('mview'),'cut');assert.equal(p.get('ex'),'motor');assert.equal(p.get('q'),'low');});
+test('query sanitizer does not pass arbitrary fields',()=>assert.equal(sanitizeParams('secret=foo&url=https://bad.example').toString(),''));
+test('query sanitizer accepts a real named camera',()=>assert.equal(sanitizeParams('shot=hero',['hero']).get('shot'),'hero'));
+test('fusion design point is unchanged',()=>{const x=FUSION.state(150);assert.equal(x.fusion,500);assert.equal(x.heating,50);assert.equal(x.Q,10);assert.equal(x.loss,150);});
+test('fusion power increases across the supported teaching range',()=>{let prev=0;for(let t=15;t<=180;t++){const s=FUSION.state(t);assert(s.fusion>=prev);assert(s.heating>=0);assert(Number.isFinite(s.fusion));prev=s.fusion;}});
+test('car at rest uses auxiliaries only',()=>{const x=load(0);assert.equal(x.battery,TRUCK.aux);assert.equal(x.wheel,0);assert.equal(x.range,0);assert.equal(x.rpm,0);});
+test('road aero power scales cubically and rpm linearly',()=>{const a=load(50),b=load(100);assert(Math.abs(b.aero/a.aero-8)<1e-12);assert.equal(b.rpm,2*a.rpm);});
+test('regeneration returns energy without increasing its magnitude',()=>{const x=load(100,-3);assert(x.wheel<0);assert(x.battery<0);assert(Math.abs(x.battery)<Math.abs(x.wheel));});
+test('road load remains finite over supported speeds',()=>{for(let v=0;v<=200;v++)for(const value of Object.values(load(v)))assert(Number.isFinite(value));});
+test('launch acceleration is finite and power limited at high speed',()=>{assert(Number.isFinite(launchAccel(0)));assert(launchAccel(0)>launchAccel(200));});
+test('state listeners notify and unsubscribe',()=>{let n=0;const off=onChange(()=>n++);changed();off();changed();assert.equal(n,1);});
+// Gate negative controls MUST be rejected; they are not app-success tests.
+test('identity gate rejects old product name',()=>assert(identityLeaks('<title>The lab</title>').length>0));
+test('identity gate rejects old owner and package',()=>assert(identityLeaks('airsup-lab').length>0));
+test('identity gate rejects old recording globals',()=>assert(identityLeaks('window.__rec.frame()').length>0));
+test('identity gate rejects font references',()=>assert(identityLeaks("url('/fonts/outfit.woff2')").length>0));
+test('identity gate accepts BrightLab',()=>assert.deepEqual(identityLeaks('BrightLab by BrightClass'),[]));
+test('model integrity gate rejects altered physics',()=>{const p='src/car/physics.ts';const bytes=readFileSync(p);const manifest={files:{[p]:hash(bytes)}};assert(checkModel(p,bytes,manifest));assert(!checkModel(p,Buffer.concat([bytes,Buffer.from('\n// mutation')]),manifest));});
+test('artifact gate detects missing script file',()=>{const d=mkdtempSync(join(tmpdir(),'brightlab-negative-'));try{writeFileSync(join(d,'index.html'),'<title>BrightLab</title><script src="/missing.js"></script>');assert(distChecks(d).some(x=>x.name==='asset exists: /missing.js'&&!x.pass));}finally{rmSync(d,{recursive:true,force:true});}});
+// Exercise the supplied offline server, including failure modes.
+const dir=mkdtempSync(join(tmpdir(),'brightlab-server-'));
+writeFileSync(join(dir,'index.html'),'BrightLab');writeFileSync(join(dir,'app.js'),'console.log("BrightLab")');
+const server=createStaticServer(dir);await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
+test('offline server returns branded index',async()=>{const r=await fetch(origin);assert.equal(r.status,200);assert.equal(await r.text(),'BrightLab');assert.equal(r.headers.get('x-content-type-options'),'nosniff');});
+test('offline server sends JavaScript MIME type',async()=>assert.match((await fetch(origin+'/app.js')).headers.get('content-type'),/javascript/));
+test('offline server returns missing assets as 404, not HTML',async()=>assert.equal((await fetch(origin+'/missing.js')).status,404));
+test('offline server refuses writes',async()=>assert.equal((await fetch(origin,{method:'POST'})).status,405));
+test('offline server handles HEAD without content',async()=>assert.equal(await(await fetch(origin,{method:'HEAD'})).text(),''));
+test('offline server rejects encoded traversal',async()=>assert.equal((await fetch(origin+'/%2e%2e%2fsecret')).status,400));
+test('offline server rejects malformed encoding',async()=>assert.equal((await fetch(origin+'/%ZZ')).status,400));
+test('offline server hides dotfiles',async()=>assert.equal((await fetch(origin+'/.env')).status,400));
+test.after(()=>{server.closeAllConnections();server.close();rmSync(dir,{recursive:true,force:true});});
