@@ -1,0 +1,15 @@
+import {build} from 'esbuild';
+import {readFile,writeFile,mkdir,cp,rm} from 'node:fs/promises';
+await rm('dist',{recursive:true,force:true});await mkdir('dist/site',{recursive:true});
+await cp('app','dist/site',{recursive:true});
+const result=await build({entryPoints:['app/js/main.js'],bundle:true,write:false,format:'iife',platform:'browser',target:'es2022',minify:false,legalComments:'inline'});
+let html=await readFile('app/index.html','utf8');
+const css=(await readFile('app/style.css','utf8'))+'\n'+await readFile('app/brand.css','utf8');
+html=html.replace(/<link rel="stylesheet"[^>]+>/g,'').replace(/<script type="module"[^>]+><\/script>/,'');
+html=html.replace('href="icon.svg"',`href="data:image/svg+xml,${encodeURIComponent(await readFile('app/icon.svg','utf8'))}"`);
+html=html.replace('</head>',`<style>${css.replace(/<\/style/gi,'<\\/style')}</style>\n</head>`);
+const js=result.outputFiles[0].text.replace(/<\/script/gi,'<\\/script');
+html=html.replace('</body>',`<script>${js}</script>\n</body>`);
+await writeFile('dist/brightmath.html',html);
+await cp('LICENSE','dist/LICENSE');await cp('NOTICE.md','dist/NOTICE.md');await cp('README.md','dist/README.md');
+console.log(JSON.stringify({build:'complete',runtimeDependencies:0,standaloneBytes:Buffer.byteLength(html),language:'ja'}));
