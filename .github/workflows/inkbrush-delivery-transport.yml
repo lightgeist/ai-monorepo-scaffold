@@ -1,0 +1,53 @@
+name: inkbrush delivery handoff
+on:
+  push:
+    branches: ['inkbrush/delivery-20260929']
+    paths: ['.github/workflows/inkbrush-delivery-transport.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Assemble verified release with safe cross-origin downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, textwrap, urllib.request, urllib.parse
+          class SafeRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  redirected=super().redirect_request(request,fp,code,msg,headers,newurl)
+                  if redirected and urllib.parse.urlsplit(request.full_url).netloc!=urllib.parse.urlsplit(newurl).netloc:
+                      redirected.remove_header('Authorization')
+                  return redirected
+          urllib.request.install_opener(urllib.request.build_opener(SafeRedirect()))
+          workflow=pathlib.Path('.github/workflows/inkbrush-delivery.yml').read_text()
+          body=workflow.split("python3 - <<'PY'\n",1)[1].split('\n          PY',1)[0]
+          exec(compile(textwrap.dedent(body),'verified-delivery-assembly','exec'))
+          PY
+      - name: Archive finished delivery package
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkbrush-1.0.0-delivery
+          path: |
+            publish/inkbrush-1.0.0-complete.zip
+            publish/inkbrush-1.0.0-release-report.md
+            publish/inkbrush-1.0.0-verification.json
+            publish/inkbrush-1.0.0-receipt.json
+          retention-days: 90
+          compression-level: 0
+      - name: Publish durable preview downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create inkbrush-v1.0.0-preview-20260929 publish/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'inkbrush 1.0.0 — native macOS preview' --notes-file publish/inkbrush-1.0.0-release-report.md
