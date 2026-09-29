@@ -1,0 +1,71 @@
+name: brightmath diagnostic inspection
+on:
+  push:
+    branches: ['brightmath/diagnostics-20260929']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Recreate exact candidate
+        run: |
+          set -euo pipefail
+          git clone https://github.com/grmchn/dopa-drill.git brightmath
+          git -C brightmath checkout --detach fdacd5fc8322f251f92ddc07f13ae85ccb2263dd
+          python3 brightmath-build/prepare.py
+          python3 brightmath-build/rebrand.py brightmath
+          python3 brightmath-build/finish.py brightmath
+          python3 brightmath-build/artwork-cleanup.py brightmath
+          cd brightmath
+          npm install --no-fund --no-audit
+          npm run build
+          npx playwright install chromium
+      - name: Observe initial state and one real answer
+        run: |
+          set -euo pipefail
+          cd brightmath
+          node server.mjs dist/site > /tmp/brightmath-server.log 2>&1 &
+          node --input-type=module - <<'JS'
+          import {chromium} from '@playwright/test';
+          import fs from 'node:fs/promises';
+          await fs.mkdir('inspect',{recursive:true});
+          const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844},reducedMotion:'reduce'});
+          const errors=[];page.on('pageerror',e=>{errors.push(String(e));console.log('PAGE_ERROR',String(e));});page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE_ERROR',m.text());});
+          await page.goto('http://127.0.0.1:4173/?inspect&count=6');await page.waitForTimeout(1600);
+          const observation=()=>page.evaluate(()=>({state:window.__brightmathTest?.S,body:document.body.innerText.slice(0,2000)}));
+          console.log('BOOT',JSON.stringify(await observation(),(k,v)=>['cells','problem','plan','rng','progress','stats'].includes(k)?undefined:v).slice(0,18000));
+          await page.screenshot({path:'inspect/brightmath-phone-boot.png'});
+          for(let i=0;i<5;i++){
+            for(const id of ['guide-skip','bonus-ok','tg-ok'])if(await page.locator('#'+id).isVisible())await page.locator('#'+id).click({timeout:3000});
+            await page.waitForTimeout(700);
+          }
+          await page.screenshot({path:'inspect/brightmath-phone-title.png'});
+          await page.locator('[data-grade="1"]').click({timeout:4000});await page.waitForTimeout(800);
+          console.log('PLAY',JSON.stringify(await page.evaluate(()=>({screen:window.__brightmathTest?.S.screen,ready:window.__brightmathTest?.S.ready,step:window.__brightmathTest?.S.step,problem:window.__brightmathTest?.S.problem}))).slice(0,20000));
+          await page.screenshot({path:'inspect/brightmath-phone-play.png'});
+          await fs.writeFile('inspect/diagnostic-errors.json',JSON.stringify(errors,null,2));
+          await browser.close();
+          JS
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          path: brightmath/inspect/brightmath-phone-title.png
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          path: brightmath/inspect/brightmath-phone-play.png
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: brightmath-inspection-evidence
+          path: brightmath/inspect/
