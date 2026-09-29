@@ -4,22 +4,20 @@ on:
     branches: ['brightlab/rebrand-20260929']
     paths: ['tools/brightlab/**', '.github/workflows/brightlab-eval.yml']
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: brightlab-rebrand
   cancel-in-progress: true
 jobs:
-  verify:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.16.0'
-      - name: Import pinned upstream outside the existing pnpm workspace
+      - name: Build BrightLab from pinned upstream outside existing workspaces
         shell: bash
         run: |
           set -euo pipefail
@@ -39,9 +37,8 @@ jobs:
           npm install --save-dev --save-exact playwright@1.56.1
           rm -rf node_modules
           npm ci
-          npx playwright install --with-deps chromium
           mkdir -p evidence
-      - name: Type, unit, source and root/subpath build gates
+      - name: Execute type, unit, identity, model, asset and dependency gates
         working-directory: standalone/brightlab
         shell: bash
         run: |
@@ -54,30 +51,80 @@ jobs:
           BASE=/school/brightlab/ npx vite build --outDir dist-subpath 2>&1 | tee evidence/subpath-build.log
           BASE=/school/brightlab/ node tools/verify.mjs dist dist-subpath | tee evidence/subpath-gates.json
           npm audit --json > evidence/dependency-audit.json
-      - name: Execute browser journeys and negative controls
-        working-directory: standalone/brightlab
-        shell: bash
-        run: |
-          set -euo pipefail
-          SUBPATH_DIST=dist-subpath timeout --signal=TERM --kill-after=15s 600s node tests/browser.mjs 2>&1 | tee evidence/browser.log
-      - name: Verify normal playback independently of fixed-step mode
-        working-directory: standalone/brightlab
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 240s node tests/runtime.mjs 2>&1 | tee evidence/runtime.log
-      - name: Rebuild the artifact byte for byte
-        working-directory: standalone/brightlab
-        shell: bash
-        run: |
-          set -euo pipefail
           find dist -type f -print0 | sort -z | xargs -0 sha256sum > evidence/build-sha256.txt
-          cp -a dist /tmp/brightlab-dist-before
-          rm -rf dist
-          npm run build 2>&1 | tee evidence/rebuild.log
-          diff -r /tmp/brightlab-dist-before dist
-          echo 'Repeated build is byte-identical.' | tee evidence/rebuild-result.txt
-      - name: Commit verified source only to isolated feature branch
+          rm -rf node_modules
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: brightlab-build-candidate
+          path: standalone/brightlab/
+          include-hidden-files: true
+          retention-days: 14
+  browser:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [desktop, touch, subpath, runtime]
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightlab-build-candidate
+          path: standalone/brightlab
+      - name: Clean install and byte-identical rebuild of extracted source
+        working-directory: standalone/brightlab
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+          cp -a dist /tmp/brightlab-expected-dist
+          npm run build 2>&1 | tee evidence/rebuild-${{ matrix.phase }}.log
+          diff -r /tmp/brightlab-expected-dist dist
+          echo 'Clean artifact extraction and reinstall reproduce the same runtime bytes.' > evidence/rebuild-result.txt
+      - name: Execute isolated production-browser verification
+        working-directory: standalone/brightlab
+        env:
+          BROWSER_PHASE: ${{ matrix.phase }}
+          SUBPATH_DIST: dist-subpath
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BROWSER_PHASE" = runtime ]; then
+            timeout --signal=TERM --kill-after=15s 720s node tests/runtime.mjs 2>&1 | tee evidence/runtime.log
+          else
+            timeout --signal=TERM --kill-after=15s 720s node tests/browser.mjs 2>&1 | tee evidence/browser.log
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: brightlab-browser-${{ matrix.phase }}
+          path: standalone/brightlab/evidence/
+          retention-days: 14
+  publish:
+    needs: [build, browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightlab-build-candidate
+          path: standalone/brightlab
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: brightlab-browser-*
+          path: verification-results
+      - name: Verify matrix completeness and combine executed evidence
+        run: python tools/brightlab/aggregate.py
+      - name: Publish verified source only to feature branch
         shell: bash
         run: |
           set -euo pipefail
@@ -89,26 +136,11 @@ jobs:
           git push origin HEAD:refs/heads/brightlab/rebrand-20260929
           git rev-parse HEAD > standalone/brightlab/evidence/source-commit.txt
           git ls-remote origin refs/heads/main > standalone/brightlab/evidence/main-ref.txt
-      - name: Package source, runnable site and executed evidence
+      - name: Package the verified source, web build and evaluation results
         env:
           RUN_URL: https://github.com/lightgeist/ai-monorepo-scaffold/actions/runs/${{ github.run_id }}
-        run: |
-          sed 's@apps/brightlab@standalone/brightlab@g' tools/brightlab/package.py > /tmp/brightlab-package.py
-          python /tmp/brightlab-package.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: brightlab-evaluation-${{ github.run_id }}
-          path: |
-            standalone/brightlab/evidence/
-            standalone/brightlab/src/
-            standalone/brightlab/index.html
-            standalone/brightlab/package*.json
-            standalone/brightlab/tests/
-            standalone/brightlab/tools/
-            standalone/brightlab/dist/
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
+        run: python tools/brightlab/package.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: success()
         with:
           name: BrightLab-1.0.0-release
