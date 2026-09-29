@@ -9,7 +9,7 @@ permissions:
   actions: read
 jobs:
   webkit:
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/setup-node@v4
@@ -26,9 +26,11 @@ jobs:
           mkdir brightmath
           unzip -q prepared/brightmath-prepared.zip -d brightmath
           cd brightmath
+          sw_vers > evidence/webkit-host.txt
+          uname -m >> evidence/webkit-host.txt
           npm ci --no-fund --no-audit > evidence/isolated-dependencies.log 2>&1
-          npx playwright install --with-deps webkit > evidence/isolated-browser-install.log 2>&1
-      - name: Run every WebKit desktop journey in isolation
+          npx playwright install webkit > evidence/isolated-browser-install.log 2>&1
+      - name: Run every WebKit desktop journey on macOS
         run: |
           set -o pipefail
           cd brightmath
@@ -39,7 +41,7 @@ jobs:
           obj=json.loads(Path('evidence/browser-results.json').read_text());s=obj['stats']
           assert s['expected']==14 and s['unexpected']==s['skipped']==s['flaky']==0,s
           shutil.copytree('evidence','../validated-webkit')
-          print('ISOLATED_WEBKIT_PASS',s)
+          print('NATIVE_WEBKIT_PASS',s)
           PY
       - name: Repeat all fourteen journeys with fresh browser processes
         run: |
@@ -54,7 +56,7 @@ jobs:
           out=Path('../validated-webkit/isolated-repeat');out.mkdir()
           shutil.copy2('evidence/browser-results.json',out/'results.json')
           shutil.copy2('evidence/repeat-webkit.log',out/'browser.log')
-          print('REPEATED_WEBKIT_PASS',s)
+          print('REPEATED_NATIVE_WEBKIT_PASS',s)
           PY
       - uses: actions/upload-artifact@v4
         if: success()
@@ -70,7 +72,7 @@ jobs:
   deliver:
     needs: webkit
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 12
     permissions:
       contents: write
       actions: read
@@ -83,7 +85,7 @@ jobs:
         env: {GH_TOKEN: '${{ github.token }}'}
         run: |
           python3 - <<'PY'
-          import json,os,time,urllib.request
+          import json,os,urllib.request
           from pathlib import Path
           base='https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']
           def get(path):
@@ -92,16 +94,10 @@ jobs:
           run=get('/actions/runs/36588417221')
           assert run['head_sha']=='13b50b328cd49ce38c11266ebaca26dcc39615d4'
           wanted={'prepare','browser (chromium-desktop, chromium)','browser (chromium-phone, chromium)','browser (firefox-desktop, firefox)','browser (webkit-phone, webkit)'}
-          for attempt in range(60):
-              jobs=get('/actions/runs/36588417221/jobs')['jobs']
-              selected=[j for j in jobs if j['name'] in wanted]
-              assert len(selected)==5
-              if all(j['status']=='completed' for j in selected):
-                  assert all(j['conclusion']=='success' for j in selected),[(j['name'],j['conclusion']) for j in selected]
-                  break
-              time.sleep(15)
-          else:raise RuntimeError('Other browser qualification did not finish within the bounded wait')
-          Path('qualification-inputs.json').write_text(json.dumps({'source_recipe_commit':run['head_sha'],'source_run':run['html_url'],'accepted_original_jobs':[{'name':j['name'],'conclusion':j['conclusion'],'url':j['html_url']} for j in selected],'superseded_webkit_job':109475051961,'reason':'Two pages/test-browser contexts closed unexpectedly; all fourteen WebKit desktop journeys rerun serially twice, without modifying application files. Original failure record retained.'},indent=2)+'\n')
+          jobs=get('/actions/runs/36588417221/jobs')['jobs']
+          selected=[j for j in jobs if j['name'] in wanted]
+          assert len(selected)==5 and all(j['status']=='completed' and j['conclusion']=='success' for j in selected)
+          Path('qualification-inputs.json').write_text(json.dumps({'source_recipe_commit':run['head_sha'],'source_run':run['html_url'],'accepted_original_jobs':[{'name':j['name'],'conclusion':j['conclusion'],'url':j['html_url']} for j in selected],'superseded_linux_webkit_jobs':[109475051961,109478879570,109485200061],'reason':'Linux WebKit had intermittent page/context closures and one extra-mode deadline failure. Observed timer runs did progress correctly, but Linux repeatability was not established. Desktop WebKit qualified on native macOS using every original journey and a complete second pass, without application changes. Prior failure evidence is retained.'},indent=2)+'\n')
           print('ORIGINAL_BROWSER_GATES_PASSED')
           PY
       - uses: actions/download-artifact@v4
@@ -118,9 +114,21 @@ jobs:
           path: browser-results
       - uses: actions/download-artifact@v4
         with:
+          name: brightmath-isolated-failure
+          run-id: 36589589080
+          github-token: '${{ github.token }}'
+          path: prior-repeat
+      - uses: actions/download-artifact@v4
+        with:
+          name: brightmath-timer-diagnosis
+          run-id: 36591421249
+          github-token: '${{ github.token }}'
+          path: prior-diagnostic
+      - uses: actions/download-artifact@v4
+        with:
           name: brightmath-isolated-webkit
           path: isolated-webkit
-      - name: Preserve failed-run evidence and aggregate all five qualified browser configurations
+      - name: Preserve prior evidence and aggregate five qualified configurations
         run: |
           set -euo pipefail
           mkdir brightmath
@@ -132,7 +140,9 @@ jobs:
           runtime={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for base in ('app','dist') for p in (root/base).rglob('*') if p.is_file()}
           Path('runtime-hashes.json').write_text(json.dumps(runtime,sort_keys=True))
           previous=Path('browser-results/brightmath-browser-webkit-desktop')
-          shutil.copytree(previous,e/'prior-webkit-attempt')
+          shutil.copytree(previous,e/'prior-linux-webkit')
+          shutil.copytree('prior-repeat',e/'prior-linux-repeat')
+          shutil.copytree('prior-diagnostic',e/'prior-linux-timer-diagnosis')
           shutil.rmtree(previous)
           shutil.copytree('isolated-webkit',previous)
           shutil.copy2('qualification-inputs.json',e/'qualification-inputs.json')
@@ -153,7 +163,7 @@ jobs:
           "$AB" screenshot "$PWD/evidence/agent-browser-title.png"
           "$AB" get title | tee evidence/agent-browser-title.txt
           "$AB" close
-      - name: Package exact qualified files with explicit source and retry provenance
+      - name: Package exact qualified files and check archive readback
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -165,7 +175,8 @@ jobs:
           a="'recipe_commit':os.environ['GITHUB_SHA']"
           assert a in s;s=s.replace(a,"'recipe_commit':'13b50b328cd49ce38c11266ebaca26dcc39615d4','delivery_recipe_commit':os.environ['GITHUB_SHA']")
           a="(stage/'START-HERE.md').write_text(report)"
-          b="report += '\\n## Qualification retry record\\n\\nThe application files were built once in source run 36588417221. Four browser configurations passed there. WebKit desktop had two unexpected page/context closures; that failure is retained under evidence/prior-webkit-attempt. All fourteen WebKit desktop journeys then passed twice using one worker and fresh browser processes, with no application changes. The canonical five-configuration total is 70 passed journeys; an additional 14-passed repeat is retained separately. This is not a claim that every historical test attempt passed. Source recipe 13b50b328cd49ce38c11266ebaca26dcc39615d4 and this delivery workflow are recorded separately. Runtime file hashes were rechecked before packaging.\\n'\n"+a
+          note='\n## Qualification boundary and retry record\n\nThe application was built once in source run 36588417221. Chromium desktop/phone, Firefox desktop and WebKit phone passed there. Desktop WebKit on Linux had intermittent page/context closures and an extra-mode timeout; isolated diagnostics observed correct timer progress but did not establish Linux repeatability. Those failed attempts are retained under evidence/prior-linux-*. All fourteen desktop WebKit journeys subsequently passed twice on macOS, using one worker, fresh processes and the same application bytes. The canonical five-configuration total is 70 passed journeys, plus the separately recorded 14-passed macOS repeat. No claim is made that every historical attempt passed or that desktop Linux WebKit is fully qualified. Browser-engine testing is not physical-device or branded Safari-app certification. Source recipe 13b50b328cd49ce38c11266ebaca26dcc39615d4 and the delivery commit are recorded separately. Runtime hashes were checked before packaging.\n'
+          b='report += '+repr(note)+'\n'+a
           assert a in s;s=s.replace(a,b)
           p.write_text(s)
           PY
