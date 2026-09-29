@@ -1,0 +1,43 @@
+name: inkbrush native baseline
+on:
+  push:
+    branches: ['inkbrush/rebrand-20260929']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin and archive pristine source
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          git clone https://github.com/robbietilton/Compositor.git source
+          git -C source checkout --detach de442f245401e47a7eddae4b83c32737352a0b4d
+          git -C source archive --format=zip --output=../out/upstream-source.zip HEAD
+          git -C source bundle create ../out/upstream-history.bundle --all
+          sw_vers > out/environment.txt
+          uname -m >> out/environment.txt
+          xcodebuild -version >> out/environment.txt
+          ls /Applications >> out/environment.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inkbrush-upstream-source
+          path: out/
+          retention-days: 30
+      - name: Pristine build and project inventory
+        run: |
+          set -o pipefail
+          xcodebuild -list -project source/Compositor.xcodeproj 2>&1 | tee out/targets.log
+          xcodebuild -project source/Compositor.xcodeproj -scheme Compositor -configuration Release -derivedDataPath "$RUNNER_TEMP/baseline-build" CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build 2>&1 | tee out/baseline-build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inkbrush-baseline-evidence
+          path: out/
+          retention-days: 30
