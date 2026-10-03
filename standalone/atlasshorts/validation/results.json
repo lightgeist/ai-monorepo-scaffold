@@ -1,0 +1,211 @@
+{
+  "distribution_integrity": {
+    "status": "passed",
+    "detail": {
+      "license_preserved": true,
+      "cloud_absent": true,
+      "font_binaries_absent": true,
+      "package_versions": "0.1.0-rc.1"
+    }
+  },
+  "browser_storage_isolation": {
+    "status": "passed",
+    "detail": "6 storage namespace assertions passed"
+  },
+  "upstream_core_regression": {
+    "status": "passed",
+    "detail": {
+      "exit_code": 0,
+      "temporary_verified_font_fixtures": 3,
+      "font_fixtures_distributed": false,
+      "excluded_cloud_files": [
+        "test_onboarding_survey.py",
+        "test_watermark_delivery.py",
+        "test_metering_free_plan.py",
+        "test_mcp_oauth.py",
+        "test_mcp_endpoint.py",
+        "test_cancellation.py",
+        "test_proxy_watch.py",
+        "test_alert_classify.py",
+        "test_autopilot.py",
+        "test_partial_processing.py",
+        "test_probe_anonymous_fallback.py",
+        "test_proxy_watch_alerts.py",
+        "test_email_policy.py",
+        "test_youtube_non_video_urls.py",
+        "test_api_keys.py",
+        "test_account_erasure.py",
+        "test_probe_noplaylist.py",
+        "test_subtitle_metering.py",
+        "test_openpanel_revenue.py",
+        "test_free_plan_denied.py",
+        "test_static_probe_cookies.py",
+        "test_probe_plan.py",
+        "test_billing_states.py",
+        "test_proxy_ledger.py",
+        "test_job_error_text.py",
+        "test_lifecycle_emails.py",
+        "test_yt_clients.py"
+      ],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "15",
+          "tests": "761",
+          "time": "9.425",
+          "timestamp": "2026-10-03T23:30:49.618173+00:00",
+          "hostname": "runnervm8df0l"
+        }
+      ],
+      "failures": [],
+      "skipped": [
+        {
+          "test": "::tests.test_clip_floor",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_clip_render_order",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_download_plan",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_filename_limits",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_gemini_block_split",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_gemini_retry",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_scene_cut_reset",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_sparse_speech",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_speaker_tracker",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "::tests.test_transcript_checkpoint",
+          "reason": "collection skipped"
+        },
+        {
+          "test": "tests.test_audit_hardening.TestSafetyCap::test_a_download_clearly_longer_than_reserved_is_cut",
+          "reason": "could not import 'main': No module named 'scenedetect'"
+        },
+        {
+          "test": "tests.test_audit_hardening.TestSafetyCap::test_within_tolerance_is_left_alone",
+          "reason": "could not import 'main': No module named 'scenedetect'"
+        },
+        {
+          "test": "tests.test_layout_ranges.TestCaptionerReadsSidecar::test_auto_caption_uses_sidecar_when_not_told",
+          "reason": "could not import 'main': No module named 'scenedetect'"
+        },
+        {
+          "test": "tests.test_llm_backend::test_stage_routes_to_local_backend_and_retries_transient",
+          "reason": "could not import 'main': No module named 'scenedetect'"
+        },
+        {
+          "test": "tests.test_llm_backend::test_score_batch_shrinks_for_local_models",
+          "reason": "could not import 'main': No module named 'scenedetect'"
+        }
+      ]
+    }
+  },
+  "post_test_distribution_integrity": {
+    "status": "passed",
+    "detail": {
+      "license_preserved": true,
+      "cloud_absent": true,
+      "font_binaries_absent": true,
+      "package_versions": "0.1.0-rc.1"
+    }
+  },
+  "live_app_api_and_mcp": {
+    "status": "passed",
+    "detail": {
+      "server": {
+        "name": "atlasshorts",
+        "title": "AtlasShorts",
+        "version": "0.1.0-rc.1"
+      },
+      "tools": [
+        "process_video",
+        "create_upload",
+        "get_job_status",
+        "list_clips",
+        "get_quota",
+        "add_subtitles",
+        "recut_clip",
+        "publish_clip"
+      ],
+      "missing_job": 404,
+      "config": {
+        "youtubeUrlEnabled": true,
+        "billingEnabled": false,
+        "googleAuthEnabled": false,
+        "jobRetentionSeconds": 86400,
+        "localLlm": null
+      }
+    }
+  },
+  "stdio_mcp": {
+    "status": "passed",
+    "detail": {
+      "json_rpc_responses": 2,
+      "stdout_protocol_clean": true
+    }
+  },
+  "real_ffmpeg_caption_render": {
+    "status": "passed",
+    "detail": {
+      "synthetic_only": true,
+      "codec": "h264",
+      "width": 360,
+      "height": 640,
+      "duration": "3.000000",
+      "ass_and_srt": true,
+      "provider_calls": 0
+    }
+  },
+  "cli_smoke": {
+    "status": "passed",
+    "detail": {
+      "version": "AtlasShorts 0.1.0-rc.1",
+      "help": true
+    }
+  },
+  "desktop_mobile_browser": {
+    "status": "passed",
+    "detail": [
+      {
+        "viewport": "desktop",
+        "page_errors": [],
+        "console_errors": [],
+        "horizontal_overflow": false,
+        "external_request_urls": [],
+        "settings_and_routes": true
+      },
+      {
+        "viewport": "mobile",
+        "page_errors": [],
+        "console_errors": [],
+        "horizontal_overflow": false,
+        "external_request_urls": [],
+        "settings_and_routes": true
+      }
+    ]
+  }
+}
