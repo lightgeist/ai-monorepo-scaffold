@@ -28,17 +28,21 @@ jobs:
           python-version: '3.11'
       - name: Install test and build tools (no model weights)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg libgl1 fonts-liberation
-          python -m pip install pytest 'pillow==12.2.0' 'httpx==0.28.1' pydantic sqlalchemy greenlet numpy opencv-python-headless 'python-dotenv==1.2.2' 'google-genai==1.75.0' 'fastapi==0.136.1' 'boto3==1.43.4' PyJWT email-validator 'python-multipart==0.0.27' build setuptools wheel 'uvicorn==0.46.0' requests tenacity rich scipy 'beautifulsoup4==4.14.3' playwright
-          npm install -g agent-browser
-          agent-browser install --with-deps
-          python -m playwright install --with-deps chromium
+          set -e
+          {
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg libgl1 fonts-liberation
+            python -m pip install pytest 'pillow==12.2.0' 'httpx==0.28.1' pydantic sqlalchemy greenlet numpy opencv-python-headless 'python-dotenv==1.2.2' 'google-genai==1.75.0' 'fastapi==0.136.1' 'boto3==1.43.4' PyJWT email-validator 'python-multipart==0.0.27' build setuptools wheel 'uvicorn==0.46.0' requests tenacity rich scipy 'beautifulsoup4==4.14.3' playwright
+            npm install -g agent-browser
+            agent-browser install --with-deps
+            python -m playwright install --with-deps chromium
+          } > /tmp/atlasshorts-build-tools.log 2>&1
+          echo 'Build and browser tools installed; no inference weights or provider credentials.'
       - name: Retrieve and transform exact upstream core
         run: |
           set -euo pipefail
           mkdir -p build
-          curl --fail --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o build/upstream.zip
+          curl --fail --silent --show-error --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o build/upstream.zip
           echo 'dbc4bfe0c2c7beb4e98fc60058d7ba126e5bed4224f49752b3eb176b722e5ead  build/upstream.zip' | sha256sum -c -
           unzip -q build/upstream.zip -d build
           mv build/openshorts-* build/upstream
@@ -50,6 +54,9 @@ jobs:
           config={'compilerOptions':{'target':'ES2020','lib':['ES2020','DOM','DOM.Iterable'],'module':'ESNext','moduleResolution':'node','jsx':'react-jsx','allowJs':True,'noEmit':True,'skipLibCheck':True,'esModuleInterop':True,'resolveJsonModule':True},'include':['src']}
           (r/'dashboard/tsconfig.json').write_text(json.dumps(config,indent=2)+'\n')
           (r/'tsconfig.json').write_text('{"compilerOptions":{}}\n')
+          (r/'remotion/public').mkdir(parents=True,exist_ok=True)
+          (r/'remotion/public/README.md').write_text('Optional typography assets are fetched by scripts/fetch_fonts.py. This file also preserves the public directory in source archives. No font binaries are included.\n')
+          p=r/'render-service/Dockerfile';s=p.read_text().replace('COPY remotion/package.json /app/remotion/package.json','COPY remotion/package.json remotion/package-lock.json /app/remotion/').replace('RUN cd /app/remotion && npm install','RUN cd /app/remotion && npm ci');p.write_text(s)
           PY
           cp build/AtlasShorts-v0.1.0-rc.1/LICENSE build/AtlasShorts-v0.1.0-rc.1/cli/LICENSE
           cp build/AtlasShorts-v0.1.0-rc.1/NOTICE build/AtlasShorts-v0.1.0-rc.1/cli/NOTICE
@@ -75,10 +82,20 @@ jobs:
           PY
           npm run build 2>&1 | tee ../validation/dashboard-build.log
       - name: Build and test optional renderer
+        id: renderer
+        continue-on-error: true
         working-directory: build/AtlasShorts-v0.1.0-rc.1/render-service
         run: |
           set -o pipefail
           npm ci --no-audit --no-fund 2>&1 | tee ../validation/renderer-install.log
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const version=JSON.parse(fs.readFileSync('node_modules/remotion/package.json')).version;
+          const path='../remotion/package.json'; const pkg=JSON.parse(fs.readFileSync(path));
+          for(const key of Object.keys(pkg.dependencies)) if(key==='remotion'||key.startsWith('@remotion/')) pkg.dependencies[key]=version;
+          fs.writeFileSync(path,JSON.stringify(pkg,null,2)+'\n'); console.log('Aligned Remotion composition packages to',version);
+          JS
+          npm install --prefix ../remotion --no-audit --no-fund 2>&1 | tee ../validation/composition-install.log
           npm run build 2>&1 | tee ../validation/renderer-build.log
           npm test 2>&1 | tee ../validation/renderer-tests.log
       - name: Build distributable CLI wheel
@@ -90,6 +107,10 @@ jobs:
         run: |
           set -o pipefail
           python tools/atlasshorts/validate.py build/AtlasShorts-v0.1.0-rc.1 2>&1 | tee build/AtlasShorts-v0.1.0-rc.1/validation/runner.log
+      - name: Require renderer test success before release
+        env:
+          RENDERER_OUTCOME: ${{ steps.renderer.outcome }}
+        run: test "$RENDERER_OUTCOME" = success
       - name: Record environment and assemble release (no fonts/dependencies)
         run: |
           python -m pip freeze > build/AtlasShorts-v0.1.0-rc.1/validation/python-environment.txt
@@ -152,8 +173,10 @@ jobs:
       - name: Import generated source only on the feature branch
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           (cd release-assets && sha256sum -c SHA256SUMS)
           test ! -e standalone/atlasshorts
           mkdir -p standalone /tmp/atlas-import
