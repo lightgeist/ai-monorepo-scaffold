@@ -1,0 +1,26 @@
+name: AtlasShorts release candidate
+on:
+  push:
+    branches: [feature/atlasshorts-v0.1.0-rc.1]
+    paths:
+      - '.github/workflows/atlasshorts-release.yml'
+      - 'standalone/atlasshorts/**'
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Retrieve exact upstream source (no code execution)
+        run: |
+          set -euo pipefail
+          mkdir -p source
+          curl --fail --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o source/upstream.zip
+          sha256sum source/upstream.zip > source/upstream.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlasshorts-pinned-source
+          path: source/
+          retention-days: 1
+          if-no-files-found: error
