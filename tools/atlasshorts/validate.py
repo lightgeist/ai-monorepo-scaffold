@@ -1,5 +1,6 @@
 """Evidence-producing validation. No provider credentials or live publication.
-Run with the fork root as argv[1]. Results are facts, including failures/skips.
+Run with the fork root as argv[1]. Results include failures and skip reasons.
+Fonts needed by upstream tests are fetched temporarily, verified, then removed.
 """
 from pathlib import Path
 import os,sys,json,subprocess,time,traceback,hashlib,re,xml.etree.ElementTree as ET
@@ -43,12 +44,28 @@ s.setItem('key','value');assert.equal(local['atlasshorts:key'],'value');assert.e
 check('browser_storage_isolation',storage)
 
 def regression():
- p=run([sys.executable,'-m','pytest','tests','-q','--junitxml='+str(E/'pytest.xml')],'pytest',timeout=300)
- detail={'exit_code':p.returncode,'excluded_cloud_files':json.loads((R/'tests/excluded-cloud-tests.json').read_text())}
- if (E/'pytest.xml').exists():
-  suites=ET.parse(E/'pytest.xml').getroot();detail['suites']=[dict(s.attrib) for s in suites.iter('testsuite')];detail['failures']=[{'test':t.attrib.get('classname','')+'::'+t.attrib.get('name',''),'message':(t.find('failure') if t.find('failure') is not None else t.find('error')).attrib.get('message','')} for t in suites.iter('testcase') if t.find('failure') is not None or t.find('error') is not None]
- results['upstream_core_regression']={'status':'passed' if p.returncode==0 else 'failed','detail':detail};(E/'results.json').write_text(json.dumps(results,indent=2));print('upstream_core_regression',p.returncode,flush=True)
-regression()
+ import urllib.request
+ temporary=[]
+ try:
+  for item in json.loads((R/'scripts/font-assets.json').read_text()):
+   if not item['path'].startswith('fonts/'):continue
+   dst=R/item['path'];assert not dst.exists(),'Fixture already exists: '+str(dst)
+   with urllib.request.urlopen(item['url'],timeout=60) as resp:data=resp.read()
+   assert hashlib.sha256(data).hexdigest()==item['sha256'],'Fixture hash mismatch'
+   dst.parent.mkdir(parents=True,exist_ok=True);temporary.append(dst);dst.write_bytes(data)
+  p=run([sys.executable,'-m','pytest','tests','-q','--junitxml='+str(E/'pytest.xml')],'pytest',timeout=300)
+  detail={'exit_code':p.returncode,'temporary_verified_font_fixtures':len(temporary),'font_fixtures_distributed':False,'excluded_cloud_files':json.loads((R/'tests/excluded-cloud-tests.json').read_text())}
+  if (E/'pytest.xml').exists():
+   suites=ET.parse(E/'pytest.xml').getroot();detail['suites']=[dict(s.attrib) for s in suites.iter('testsuite')]
+   detail['failures']=[{'test':t.attrib.get('classname','')+'::'+t.attrib.get('name',''),'message':(t.find('failure') if t.find('failure') is not None else t.find('error')).attrib.get('message','')} for t in suites.iter('testcase') if t.find('failure') is not None or t.find('error') is not None]
+   detail['skipped']=[{'test':t.attrib.get('classname','')+'::'+t.attrib.get('name',''),'reason':t.find('skipped').attrib.get('message','')} for t in suites.iter('testcase') if t.find('skipped') is not None]
+  (E/'regression-summary.json').write_text(json.dumps(detail,indent=2))
+  assert p.returncode==0,json.dumps(detail)
+  return detail
+ finally:
+  for p in temporary:p.unlink(missing_ok=True)
+check('upstream_core_regression',regression)
+check('post_test_distribution_integrity',integrity)
 
 def api():
  from fastapi.testclient import TestClient
@@ -106,30 +123,34 @@ def browser():
    urllib.request.urlopen('http://127.0.0.1:5175',timeout=1);urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=1);break
   except Exception:time.sleep(1)
  else:raise RuntimeError('Servers not ready')
- # Required agent-browser gut check, with independent detailed browser assertions below.
  for label,args in [('open',['open','http://127.0.0.1:5175']),('wait',['wait','--load','networkidle']),('snapshot',['snapshot','-i']),('screenshot',['screenshot',str(E/'agent-browser-desktop.png')]),('close',['close'])]:
   p=run(['agent-browser',*args],'agent-browser-'+label,timeout=60);assert p.returncode==0,p.stdout
- from playwright.sync_api import sync_playwright
+ from playwright.sync_api import sync_playwright,expect
  captures=[]
  with sync_playwright() as pw:
   b=pw.chromium.launch(headless=True,args=['--no-sandbox'])
   for name,width,height in [('desktop',1440,1000),('mobile',393,852)]:
-   context=b.new_context(viewport={'width':width,'height':height});page=context.new_page();errors=[];external=[]
+   context=b.new_context(viewport={'width':width,'height':height});page=context.new_page();errors=[];external=[];console=[]
    page.on('pageerror',lambda e:errors.append(str(e)))
+   page.on('console',lambda m:console.append({'type':m.type,'text':m.text}) if m.type=='error' else None)
    page.on('request',lambda req:external.append(req.url) if not req.url.startswith(('http://127.0.0.1','http://localhost','data:','blob:')) else None)
-   page.goto('http://127.0.0.1:5175',wait_until='networkidle');page.wait_for_timeout(1000)
-   text=page.inner_text('body');assert 'AtlasShorts' in text and len(text)>300,text[:300]
+   page.goto('http://127.0.0.1:5175',wait_until='networkidle');expect(page.locator('body')).to_contain_text('AtlasShorts')
+   text=page.inner_text('body');assert len(text)>300,text[:300]
    assert not page.locator('vite-error-overlay').count();assert not errors,errors
    page.screenshot(path=str(E/(name+'-workspace.png')),full_page=True)
    overflow=page.evaluate('document.documentElement.scrollWidth > window.innerWidth + 2')
    settings=page.get_by_role('button',name=re.compile('Go to Settings|^Settings$',re.I))
-   if settings.count():settings.first.click();page.wait_for_timeout(400)
-   assert 'Gemini' in page.inner_text('body')
+   for button in settings.all():
+    if button.is_visible():button.click();break
+   expect(page.locator('body')).to_contain_text('Gemini')
    page.screenshot(path=str(E/(name+'-settings.png')),full_page=True)
-   page.goto('http://127.0.0.1:5175/#legal',wait_until='networkidle');assert 'About this self-hosted release' in page.inner_text('body')
-   page.goto('http://127.0.0.1:5175/#landing',wait_until='networkidle');assert 'Open workspace' in page.inner_text('body');page.get_by_role('button',name='Open workspace').click();page.wait_for_timeout(500);assert '#app' in page.url
+   page.goto('http://127.0.0.1:5175/#legal',wait_until='networkidle')
+   expect(page.get_by_role('heading',name='About this self-hosted release')).to_be_visible(timeout=10000)
+   page.goto('http://127.0.0.1:5175/#landing',wait_until='networkidle')
+   open_button=page.get_by_role('button',name='Open workspace');expect(open_button).to_be_visible(timeout=10000);open_button.click()
+   expect(page).to_have_url(re.compile('#app$'));expect(page.locator('body')).to_contain_text('AtlasShorts')
    assert not errors,errors
-   captures.append({'viewport':name,'page_errors':errors,'horizontal_overflow':overflow,'external_request_urls':sorted(set(external)),'settings_and_routes':True});context.close()
+   captures.append({'viewport':name,'page_errors':errors,'console_errors':console,'horizontal_overflow':overflow,'external_request_urls':sorted(set(external)),'settings_and_routes':True});context.close()
   b.close()
  return captures
 check('desktop_mobile_browser',browser)
@@ -139,10 +160,11 @@ for p in processes:
 (E/'results.json').write_text(json.dumps(results,indent=2,default=str))
 lines=['# Validation — AtlasShorts 0.1.0-rc.1','','This report is generated from the actual run, not a planned test list.','','| Check | Result |','|---|---|']
 for name,result in results.items():lines.append('| '+name+' | '+result['status']+' |')
-lines+=['','Full details and logs are under `validation/`. Regression results explicitly list excluded commercial-cloud test files and all failures/skips. A green build does not imply a tested provider pipeline.','','## Not tested','','Live Gemini/local-LLM moment selection; ASR or face-tracking inference with downloaded model weights; paid fal.ai/ElevenLabs video generation; real publishing/scheduling; GPU operation; full Docker image execution; public or multi-user deployment; dependency-vulnerability and commercial-license clearance. The sample video is a synthetic FFmpeg fixture, not an AI-generated customer video.','','Frontend and renderer build logs are included separately by the release workflow.']
+reg=results.get('upstream_core_regression',{}).get('detail',{})
+for suite in reg.get('suites',[]):
+ total=int(suite['tests']);skipped=int(suite['skipped']);failed=int(suite['failures']);errors=int(suite['errors']);lines+=['',f'Python core regression: **{total-skipped-failed-errors} passed, {skipped} skipped, {failed} failed, {errors} errors** ({total} collected).']
+lines+=['','The 27 test files tied to the excluded commercial cloud layer are not collected. Existing upstream conditional skip reasons are recorded in `validation/regression-summary.json`. The regression suite uses temporary hash-verified font fixtures; those files are removed before packaging. Browser screenshots use system fallbacks.','','Full details and logs are under `validation/`. A green build does not imply a tested AI-provider pipeline.','','## Not tested','','Live Gemini/local-LLM moment selection; ASR or face-tracking inference with downloaded model weights; paid fal.ai/ElevenLabs video generation; real publishing/scheduling; GPU operation; full Docker image execution; public or multi-user deployment; dependency-vulnerability and commercial-license clearance. The sample video is a synthetic FFmpeg fixture, not an AI-generated customer video.','','Frontend and renderer build logs are included separately by the release workflow.']
 (R/'VALIDATION.md').write_text('\n'.join(lines)+'\n')
 print('ATLAS_VALIDATION_JSON='+json.dumps(results,default=str),flush=True)
-# Core regression failures are recorded, not hidden; packaging an RC is allowed.
-# Broken product build, distribution boundary, API or browser does block publication.
-required=['distribution_integrity','browser_storage_isolation','live_app_api_and_mcp','stdio_mcp','real_ffmpeg_caption_render','cli_smoke','desktop_mobile_browser']
+required=['distribution_integrity','browser_storage_isolation','upstream_core_regression','post_test_distribution_integrity','live_app_api_and_mcp','stdio_mcp','real_ffmpeg_caption_render','cli_smoke','desktop_mobile_browser']
 raise SystemExit(0 if all(results.get(k,{}).get('status')=='passed' for k in required) else 2)
