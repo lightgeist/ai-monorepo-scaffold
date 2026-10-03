@@ -1,0 +1,40 @@
+name: atlasshorts
+services:
+  backend:
+    build: .
+    env_file: .env
+    environment:
+      BILLING_ENABLED: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - uploads:/app/uploads
+      - output:/app/output
+      - model_cache:/app/.cache/huggingface
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ./dashboard
+      target: prod
+    ports:
+      - "127.0.0.1:5175:80"
+    depends_on: [backend]
+    restart: unless-stopped
+  renderer:
+    profiles: [renderer]
+    build:
+      context: .
+      dockerfile: render-service/Dockerfile
+    environment:
+      REMOTION_BUNDLE_PATH: /app/remotion
+      OUTPUT_DIR: /output
+      PORT: "3100"
+    volumes:
+      - output:/output
+    restart: unless-stopped
+volumes:
+  uploads:
+  output:
+  model_cache:

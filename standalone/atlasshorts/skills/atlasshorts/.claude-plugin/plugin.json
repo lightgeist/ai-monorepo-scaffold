@@ -1,0 +1,27 @@
+{
+  "name": "atlasshorts",
+  "version": "1.1.0",
+  "description": "Turn long videos (podcasts, webinars, streams) into vertical 9:16 clips with subtitles, re-cut them, and publish them to TikTok, Instagram Reels and YouTube Shorts via the AtlasShorts API or MCP server.",
+  "author": {
+    "name": "AtlasShorts",
+    "url": "http://localhost:5175/"
+  },
+  "homepage": "https://github.com/lightgeist/ai-monorepo-scaffold/tree/feature/atlasshorts-v0.1.0-rc.1/standalone/atlasshorts/tree/main/skills/atlasshorts",
+  "repository": "https://github.com/lightgeist/ai-monorepo-scaffold/tree/feature/atlasshorts-v0.1.0-rc.1/standalone/atlasshorts",
+  "license": "MIT",
+  "keywords": [
+    "video",
+    "clips",
+    "shorts",
+    "reels",
+    "tiktok",
+    "youtube shorts",
+    "subtitles",
+    "social media",
+    "publishing",
+    "automation"
+  ],
+  "skills": [
+    "."
+  ]
+}

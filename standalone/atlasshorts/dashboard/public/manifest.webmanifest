@@ -1,0 +1,15 @@
+{
+  "name": "AtlasShorts",
+  "short_name": "AtlasShorts",
+  "start_url": "/#app",
+  "display": "standalone",
+  "theme_color": "#252a28",
+  "background_color": "#252a28",
+  "icons": [
+    {
+      "src": "/atlas-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

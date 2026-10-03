@@ -1,0 +1,102 @@
+[
+  {
+    "path": "dashboard/public/fonts/geist-600-latin.woff2",
+    "sha256": "9b6f5ff45b278c744b5f379a2c4ecbaf858a842b8eaf82ac8d21b699ca16c608",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-600-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/instrument-serif-400-latin.woff2",
+    "sha256": "60c06664b5a95c7de6cc3e00d1f9034d78bd1e40b564016b241674449a067d4d",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/instrument-serif-400-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/Montserrat-ExtraBold.ttf",
+    "sha256": "d3ac6a843d3ba6d5cafd44cf39e437055c8aed7e261010f595f57d3c7b3e2c1b",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/Montserrat-ExtraBold.ttf"
+  },
+  {
+    "path": "dashboard/public/fonts/geist-400-latin-ext.woff2",
+    "sha256": "58a6b173d5ca1dec92166ea3c6cb1a84a4144556d10928ac14e8e6b40e4787bd",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-400-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/jetbrains-mono-500-latin-ext.woff2",
+    "sha256": "9c38cb2d0d2d93c1ee6e21fa78db76f13ea7e15e15cc64214c7ca89b6aaa35c4",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/jetbrains-mono-500-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/geist-600-latin-ext.woff2",
+    "sha256": "58a6b173d5ca1dec92166ea3c6cb1a84a4144556d10928ac14e8e6b40e4787bd",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-600-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/jetbrains-mono-500-latin.woff2",
+    "sha256": "2c32b9b3ee358c119e210f6f5195f9bd34894d78a785ff2e95d60e718e400af4",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/jetbrains-mono-500-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/geist-400-latin.woff2",
+    "sha256": "9b6f5ff45b278c744b5f379a2c4ecbaf858a842b8eaf82ac8d21b699ca16c608",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-400-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/Anton-Regular.ttf",
+    "sha256": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/Anton-Regular.ttf"
+  },
+  {
+    "path": "dashboard/public/fonts/geist-500-latin-ext.woff2",
+    "sha256": "58a6b173d5ca1dec92166ea3c6cb1a84a4144556d10928ac14e8e6b40e4787bd",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-500-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/noto-serif-700-latin.woff2",
+    "sha256": "6d68191c633e79b3b7b52796940764c22bf21c125268467260a2b884345ad33a",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/noto-serif-700-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/geist-500-latin.woff2",
+    "sha256": "9b6f5ff45b278c744b5f379a2c4ecbaf858a842b8eaf82ac8d21b699ca16c608",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/geist-500-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/jetbrains-mono-400-latin.woff2",
+    "sha256": "2c32b9b3ee358c119e210f6f5195f9bd34894d78a785ff2e95d60e718e400af4",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/jetbrains-mono-400-latin.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/instrument-serif-400-latin-ext.woff2",
+    "sha256": "a8c4bd7cd7073180e740d2d83a616b5cb0845579b73207eeafeae8532e70c901",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/instrument-serif-400-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/jetbrains-mono-400-latin-ext.woff2",
+    "sha256": "9c38cb2d0d2d93c1ee6e21fa78db76f13ea7e15e15cc64214c7ca89b6aaa35c4",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/jetbrains-mono-400-latin-ext.woff2"
+  },
+  {
+    "path": "dashboard/public/fonts/noto-serif-700-latin-ext.woff2",
+    "sha256": "321b0377fc653a4b85c6ccdc14ed81c825f8431b0ee82c63604016cfedf23424",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/dashboard/public/fonts/noto-serif-700-latin-ext.woff2"
+  },
+  {
+    "path": "remotion/public/fonts/NotoSerif-Bold.ttf",
+    "sha256": "3b2086a869bcded2aeb4416fc281ceec9d6ce3c06756cda19f8f763636204e7d",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/remotion/public/fonts/NotoSerif-Bold.ttf"
+  },
+  {
+    "path": "fonts/Montserrat-ExtraBold.ttf",
+    "sha256": "d3ac6a843d3ba6d5cafd44cf39e437055c8aed7e261010f595f57d3c7b3e2c1b",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/fonts/Montserrat-ExtraBold.ttf"
+  },
+  {
+    "path": "fonts/NotoSerif-Bold.ttf",
+    "sha256": "3b2086a869bcded2aeb4416fc281ceec9d6ce3c06756cda19f8f763636204e7d",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/fonts/NotoSerif-Bold.ttf"
+  },
+  {
+    "path": "fonts/Anton-Regular.ttf",
+    "sha256": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+    "url": "https://raw.githubusercontent.com/mutonby/openshorts/06a119c280e545bc3f55f2b7b036d4c187630d50/fonts/Anton-Regular.ttf"
+  }
+]

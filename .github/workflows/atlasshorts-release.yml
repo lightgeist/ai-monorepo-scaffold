@@ -1,0 +1,200 @@
+name: AtlasShorts release candidate
+on:
+  push:
+    branches: [feature/atlasshorts-v0.1.0-rc.1]
+    paths: ['.github/workflows/atlasshorts-release.yml', 'tools/atlasshorts/**']
+permissions:
+  contents: read
+concurrency:
+  group: atlasshorts-release-candidate
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BILLING_ENABLED: '0'
+      FFMPEG_ENCODER: x264
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test and build tools (no model weights)
+        run: |
+          set -e
+          {
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg libgl1 fonts-liberation
+            python -m pip install pytest 'pillow==12.2.0' 'httpx==0.28.1' pydantic sqlalchemy greenlet numpy opencv-python-headless 'python-dotenv==1.2.2' 'google-genai==1.75.0' 'fastapi==0.136.1' 'boto3==1.43.4' PyJWT email-validator 'python-multipart==0.0.27' build setuptools wheel 'uvicorn==0.46.0' requests tenacity rich scipy 'beautifulsoup4==4.14.3' playwright
+            npm install -g agent-browser
+            agent-browser install --with-deps
+            python -m playwright install --with-deps chromium
+          } > /tmp/atlasshorts-build-tools.log 2>&1
+          echo 'Build and browser tools installed; no inference weights or provider credentials.'
+      - name: Retrieve and transform exact upstream core
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          curl --fail --silent --show-error --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o build/upstream.zip
+          echo 'dbc4bfe0c2c7beb4e98fc60058d7ba126e5bed4224f49752b3eb176b722e5ead  build/upstream.zip' | sha256sum -c -
+          unzip -q build/upstream.zip -d build
+          mv build/openshorts-* build/upstream
+          python tools/atlasshorts/build_fork.py build/upstream build/AtlasShorts-v0.1.0-rc.1
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          r=Path('build/AtlasShorts-v0.1.0-rc.1')
+          config={'compilerOptions':{'target':'ES2020','lib':['ES2020','DOM','DOM.Iterable'],'module':'ESNext','moduleResolution':'node','jsx':'react-jsx','allowJs':True,'noEmit':True,'skipLibCheck':True,'esModuleInterop':True,'resolveJsonModule':True},'include':['src']}
+          (r/'dashboard/tsconfig.json').write_text(json.dumps(config,indent=2)+'\n')
+          (r/'tsconfig.json').write_text('{"compilerOptions":{}}\n')
+          (r/'remotion/public').mkdir(parents=True,exist_ok=True)
+          (r/'remotion/public/README.md').write_text('Optional typography assets are fetched by scripts/fetch_fonts.py. This file also preserves the public directory in source archives. No font binaries are included.\n')
+          p=r/'render-service/Dockerfile';s=p.read_text().replace('COPY remotion/package.json /app/remotion/package.json','COPY remotion/package.json remotion/package-lock.json /app/remotion/').replace('RUN cd /app/remotion && npm install','RUN cd /app/remotion && npm ci');p.write_text(s)
+          PY
+          cp build/AtlasShorts-v0.1.0-rc.1/LICENSE build/AtlasShorts-v0.1.0-rc.1/cli/LICENSE
+          cp build/AtlasShorts-v0.1.0-rc.1/NOTICE build/AtlasShorts-v0.1.0-rc.1/cli/NOTICE
+          mkdir -p build/AtlasShorts-v0.1.0-rc.1/validation build/AtlasShorts-v0.1.0-rc.1/scripts/release
+          cp tools/atlasshorts/*.py build/AtlasShorts-v0.1.0-rc.1/scripts/release/
+          cp .github/workflows/atlasshorts-release.yml build/AtlasShorts-v0.1.0-rc.1/scripts/release/workflow-reference.yml
+          python build/AtlasShorts-v0.1.0-rc.1/assets/make_watermark.py
+      - name: Build actual dashboard
+        working-directory: build/AtlasShorts-v0.1.0-rc.1/dashboard
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund 2>&1 | tee ../validation/dashboard-install.log
+          python - <<'PY'
+          from pathlib import Path
+          root=Path('node_modules'); texts=[]
+          for p in sorted(root.rglob('*')):
+              if p.is_file() and p.name.lower().startswith(('license','licence','copying','notice')) and p.suffix.lower() in {'','.txt','.md','.rst'}:
+                  try: text=p.read_text()
+                  except UnicodeError: continue
+                  texts.append('\n\n===== '+p.relative_to(root).as_posix()+' =====\n'+text)
+          Path('public/THIRD-PARTY-LICENSES.txt').write_text('Dependency license texts from the locked dashboard build.\n'+''.join(texts))
+          print('Preserved license/notice documents:',len(texts))
+          PY
+          npm run build 2>&1 | tee ../validation/dashboard-build.log
+      - name: Build and test optional renderer
+        id: renderer
+        continue-on-error: true
+        working-directory: build/AtlasShorts-v0.1.0-rc.1/render-service
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund 2>&1 | tee ../validation/renderer-install.log
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const version=JSON.parse(fs.readFileSync('node_modules/remotion/package.json')).version;
+          const path='../remotion/package.json'; const pkg=JSON.parse(fs.readFileSync(path));
+          for(const key of Object.keys(pkg.dependencies)) if(key==='remotion'||key.startsWith('@remotion/')) pkg.dependencies[key]=version;
+          fs.writeFileSync(path,JSON.stringify(pkg,null,2)+'\n'); console.log('Aligned Remotion composition packages to',version);
+          JS
+          npm install --prefix ../remotion --no-audit --no-fund 2>&1 | tee ../validation/composition-install.log
+          npm run build 2>&1 | tee ../validation/renderer-build.log
+          npm test 2>&1 | tee ../validation/renderer-tests.log
+      - name: Build distributable CLI wheel
+        run: |
+          python -m build --wheel --outdir build/AtlasShorts-v0.1.0-rc.1/wheels build/AtlasShorts-v0.1.0-rc.1/cli
+          python -m pip install --no-deps build/AtlasShorts-v0.1.0-rc.1/wheels/*.whl
+          atlasshorts --version | tee build/AtlasShorts-v0.1.0-rc.1/validation/installed-cli.log
+      - name: Validate core, API, MCP, UI and real FFmpeg render
+        run: |
+          set -o pipefail
+          python tools/atlasshorts/validate.py build/AtlasShorts-v0.1.0-rc.1 2>&1 | tee build/AtlasShorts-v0.1.0-rc.1/validation/runner.log
+      - name: Require renderer test success before release
+        env:
+          RENDERER_OUTCOME: ${{ steps.renderer.outcome }}
+        run: test "$RENDERER_OUTCOME" = success
+      - name: Record environment and assemble release (no fonts/dependencies)
+        run: |
+          python -m pip freeze > build/AtlasShorts-v0.1.0-rc.1/validation/python-environment.txt
+          node --version > build/AtlasShorts-v0.1.0-rc.1/validation/node-version.txt
+          ffmpeg -version > build/AtlasShorts-v0.1.0-rc.1/validation/ffmpeg-version.txt
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile,tarfile,hashlib,shutil,json
+          r=Path('build/AtlasShorts-v0.1.0-rc.1'); out=Path('release-assets');out.mkdir()
+          clean=Path('release-source')/r.name;clean.mkdir(parents=True)
+          for p in sorted(r.rglob('*')):
+              if not p.is_file():continue
+              rel=p.relative_to(r);parts=rel.parts
+              if any(x in parts for x in ['node_modules','__pycache__','.pytest_cache','.git','.venv']) or any(x.endswith('.egg-info') for x in parts):continue
+              if parts[:2]==('cli','build') or rel.name=='.env':continue
+              if p.suffix.lower() in {'.ttf','.otf','.woff','.woff2','.ttc'}:raise SystemExit('Forbidden font artifact '+str(rel))
+              dst=clean/rel;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,dst)
+          entries=sorted(p for p in clean.rglob('*') if p.is_file())
+          (clean/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.relative_to(clean).as_posix()+'\n' for p in entries))
+          zip_path=out/(r.name+'.zip')
+          with zipfile.ZipFile(zip_path,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(clean.rglob('*')):
+                  if p.is_file():z.write(p,r.name+'/'+p.relative_to(clean).as_posix())
+          with tarfile.open(out/'source-tree.tar.gz','w:gz') as t:t.add(clean,arcname=clean.name)
+          shutil.copy2(clean/'START-HERE.md',out/'AtlasShorts-START-HERE.md')
+          shutil.copy2(clean/'VALIDATION.md',out/'AtlasShorts-VALIDATION.md')
+          for p in (clean/'wheels').glob('*.whl'):shutil.copy2(p,out/p.name)
+          assets=sorted(p for p in out.iterdir() if p.is_file())
+          (out/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in assets))
+          print('ATLAS_RELEASE_SUMMARY='+json.dumps({'files':len(entries)+1,'zip_bytes':zip_path.stat().st_size,'sha256':hashlib.sha256(zip_path.read_bytes()).hexdigest()}))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atlasshorts-validation
+          path: build/AtlasShorts-v0.1.0-rc.1/validation/
+          retention-days: 7
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlasShorts-v0.1.0-rc.1
+          path: release-assets/
+          retention-days: 30
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/atlasshorts-v0.1.0-rc.1
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: AtlasShorts-v0.1.0-rc.1
+          path: release-assets
+      - name: Import generated source only on the feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          (cd release-assets && sha256sum -c SHA256SUMS)
+          test ! -e standalone/atlasshorts
+          mkdir -p standalone /tmp/atlas-import
+          tar -xzf release-assets/source-tree.tar.gz -C /tmp/atlas-import
+          cp -a /tmp/atlas-import/AtlasShorts-v0.1.0-rc.1 standalone/atlasshorts
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- standalone/atlasshorts
+          git commit -m 'feat(atlasshorts): import validated self-hosted release candidate [skip ci]'
+          gh auth setup-git
+          git push origin HEAD:feature/atlasshorts-v0.1.0-rc.1
+          gh release create 'atlasshorts/v0.1.0-rc.1' \
+            --target "$(git rev-parse HEAD)" \
+            --prerelease \
+            --title 'AtlasShorts 0.1.0-rc.1 — by Deep Intuition' \
+            --notes-file standalone/atlasshorts/VALIDATION.md \
+            release-assets/AtlasShorts-v0.1.0-rc.1.zip \
+            release-assets/AtlasShorts-START-HERE.md \
+            release-assets/AtlasShorts-VALIDATION.md \
+            release-assets/SHA256SUMS \
+            release-assets/*.whl

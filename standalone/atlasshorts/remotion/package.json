@@ -1,0 +1,27 @@
+{
+  "name": "@deepintuition/atlasshorts-remotion",
+  "version": "0.1.0-rc.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.446",
+    "@remotion/google-fonts": "4.0.446",
+    "@remotion/layout-utils": "4.0.446",
+    "@remotion/media": "4.0.446",
+    "@remotion/player": "4.0.446",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "remotion": "4.0.446",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "typescript": "^5.4.0"
+  }
+}
