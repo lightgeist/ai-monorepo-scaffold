@@ -10,23 +10,43 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Prepare local smoke-test runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'platform-tools' 'system-images;android-35;aosp_atd;x86_64'
-          mkdir -p "$RUNNER_TEMP/nearby-emulator"
-          cp -a "$SDK/emulator" "$RUNNER_TEMP/nearby-emulator/emulator"
-          cp -a "$SDK/platform-tools" "$RUNNER_TEMP/nearby-emulator/platform-tools"
-          cp -a "$SDK/system-images/android-35/aosp_atd/x86_64" "$RUNNER_TEMP/nearby-emulator/system-image"
-          cd "$RUNNER_TEMP/nearby-emulator"
-          sha256sum emulator/emulator platform-tools/adb system-image/system.img > SHA256SUMS
-          tar -czf "$RUNNER_TEMP/nearby-emulator.tar.gz" .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: nearby-emulator-tools
-          path: ${{ runner.temp }}/nearby-emulator.tar.gz
+          run-id: 37160545950
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/previous
+      - name: Split runtime archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/parts"
+          split -b 300M -d "$RUNNER_TEMP/previous/nearby-emulator.tar.gz" "$RUNNER_TEMP/parts/part-"
+          cd "$RUNNER_TEMP/parts"
+          sha256sum part-* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-emulator-part-00
+          path: ${{ runner.temp }}/parts/part-00
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-emulator-part-01
+          path: ${{ runner.temp }}/parts/part-01
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-emulator-part-02
+          path: ${{ runner.temp }}/parts/part-02
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-emulator-part-03
+          path: ${{ runner.temp }}/parts/part-03
           retention-days: 1
           compression-level: 0
           if-no-files-found: error
