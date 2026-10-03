@@ -1,0 +1,68 @@
+name: atlascode-rs pinned baseline
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch and inventory exact upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/srothgan/claude-code-rust.git source
+          git -C source checkout --detach ddcf1eb5513b02ca2a68964220f115da0a69a80a
+          test "$(git -C source rev-parse HEAD)" = ddcf1eb5513b02ca2a68964220f115da0a69a80a
+          mkdir -p workspace/evidence
+          git -C source ls-tree -r HEAD > workspace/evidence/upstream-tree.txt
+          git -C source log --format=fuller -10 > workspace/evidence/upstream-recent-history.txt
+          git -C source archive --format=tar.gz --prefix=upstream/ HEAD > workspace/upstream-source.tar.gz
+          git -C source bundle create ../workspace/upstream-history.bundle --all
+          git -C source grep -nEi 'claude.?code.?rust|claude.?rs|srothgan|CCR_|CLAUDE_RS|https?://' HEAD > workspace/evidence/upstream-identity-inventory.txt || test "$?" = 1
+          sha256sum workspace/upstream-* > workspace/evidence/upstream-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-upstream-workspace
+          path: workspace/
+          retention-days: 14
+  baseline:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: atlascode-rs-upstream-workspace
+      - run: tar -xzf upstream-source.tar.gz
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Tool versions
+        working-directory: upstream
+        run: |
+          mkdir -p ../baseline-evidence
+          { uname -a; rustc --version; cargo --version; node --version; npm --version; } 2>&1 | tee ../baseline-evidence/tool-versions.log
+      - name: Rust baseline
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --all-targets 2>&1 | tee ../baseline-evidence/rust-tests.log
+      - name: Bridge baseline
+        if: always()
+        working-directory: upstream/agent-sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci 2>&1 | tee ../../baseline-evidence/bridge-install.log
+          npm test 2>&1 | tee ../../baseline-evidence/bridge-tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-baseline-evidence
+          path: baseline-evidence/
+          retention-days: 30
