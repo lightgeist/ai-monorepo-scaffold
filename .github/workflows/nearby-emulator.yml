@@ -1,0 +1,32 @@
+name: Nearby isolated emulator tools
+on:
+  push:
+    branches: [build/nearby-toolchain-20261004]
+    paths: [.github/workflows/nearby-emulator.yml]
+permissions:
+  contents: read
+jobs:
+  emulator-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare local smoke-test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" 'emulator' 'platform-tools' 'system-images;android-35;aosp_atd;x86_64'
+          mkdir -p "$RUNNER_TEMP/nearby-emulator"
+          cp -a "$SDK/emulator" "$RUNNER_TEMP/nearby-emulator/emulator"
+          cp -a "$SDK/platform-tools" "$RUNNER_TEMP/nearby-emulator/platform-tools"
+          cp -a "$SDK/system-images/android-35/aosp_atd/x86_64" "$RUNNER_TEMP/nearby-emulator/system-image"
+          cd "$RUNNER_TEMP/nearby-emulator"
+          sha256sum emulator/emulator platform-tools/adb system-image/system.img > SHA256SUMS
+          tar -czf "$RUNNER_TEMP/nearby-emulator.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-emulator-tools
+          path: ${{ runner.temp }}/nearby-emulator.tar.gz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
