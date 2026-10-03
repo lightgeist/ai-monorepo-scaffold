@@ -2,25 +2,52 @@ name: AtlasShorts release candidate
 on:
   push:
     branches: [feature/atlasshorts-v0.1.0-rc.1]
-    paths:
-      - '.github/workflows/atlasshorts-release.yml'
-      - 'standalone/atlasshorts/**'
+    paths: ['.github/workflows/atlasshorts-release.yml', 'standalone/atlasshorts/**']
 permissions:
   contents: read
 jobs:
-  source:
+  dependencies:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - name: Retrieve exact upstream source (no code execution)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Retrieve pinned source
         run: |
           set -euo pipefail
-          mkdir -p source
-          curl --fail --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o source/upstream.zip
-          sha256sum source/upstream.zip > source/upstream.sha256
+          curl --fail --location --retry 3 'https://codeload.github.com/mutonby/openshorts/zip/06a119c280e545bc3f55f2b7b036d4c187630d50' -o upstream.zip
+          unzip -q upstream.zip
+          mv openshorts-* upstream
+          mkdir -p evidence wheels
+      - name: Prepare dashboard dependencies from lockfile
+        working-directory: upstream/dashboard
+        run: npm ci --no-audit --no-fund
+      - name: Prepare optional renderer dependencies from lockfile
+        working-directory: upstream/render-service
+        run: npm ci --no-audit --no-fund
+      - name: Download wheels for offline core testing
+        run: |
+          python -m pip download -d wheels pytest pillow httpx pydantic sqlalchemy greenlet numpy opencv-python-headless python-dotenv google-genai fastapi boto3 PyJWT email-validator python-multipart build hatchling uvicorn requests tenacity rich
+          python --version > evidence/python.txt
+          node --version > evidence/node.txt
+          npm --version > evidence/npm.txt
+          cp upstream/dashboard/package-lock.json evidence/dashboard-package-lock.json
+          cp upstream/render-service/package-lock.json evidence/renderer-package-lock.json
+          find wheels -type f -exec sha256sum {} \; > evidence/wheels-sha256.txt
+      - name: Package build-only dependencies (not a product distribution)
+        run: |
+          tar -czf build-dependencies.tar.gz upstream/dashboard/node_modules upstream/render-service/node_modules wheels evidence
+          sha256sum build-dependencies.tar.gz > build-dependencies.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: atlasshorts-pinned-source
-          path: source/
+          name: atlasshorts-build-dependencies
+          path: |
+            build-dependencies.tar.gz
+            build-dependencies.sha256
           retention-days: 1
+          compression-level: 0
           if-no-files-found: error
