@@ -2,14 +2,12 @@ name: atlascode-rs release qualification
 on:
   push:
     branches: ['atlascode-rs/rebrand-20261004']
-    paths:
-      - 'tools/atlascode-rs/**'
-      - '.github/workflows/atlascode-rs-verify.yml'
+    paths: ['tools/atlascode-rs/**', '.github/workflows/atlascode-rs-verify.yml']
 permissions:
   contents: read
 concurrency:
   group: atlascode-rs-qualification-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -29,7 +27,10 @@ jobs:
           cp tools/atlascode-rs/verify-brand.py source/tools/verify-brand.py
           cp tools/atlascode-rs/import.py source/tools/rebrand-import.py
           cp tools/atlascode-rs/augment.py source/tools/rebrand-augment.py
+          cp tools/atlascode-rs/refine.py source/tools/rebrand-refine.py
+          python3 tools/atlascode-rs/refine.py source | tee prepared/evidence/refine.log
           (cd source && cargo fmt --all && cargo fmt --all -- --check) 2>&1 | tee prepared/evidence/format.log
+          python3 tools/atlascode-rs/refine.py source --finalize | tee prepared/evidence/ledger.log
           python3 source/tools/verify-brand.py | tee prepared/evidence/brand-audit.json
           git -C source add -A
           git -C source diff --cached --stat > prepared/evidence/rebrand-diff-stat.txt
@@ -53,15 +54,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-prepared
           path: input
       - run: tar -xzf input/source.tar.gz
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
-      - name: Bridge quality and locked install
+          node-version: '24.21.0'
+      - name: Complete bridge suite and locked dependency checks
         working-directory: atlascode-rs
         shell: bash
         run: |
@@ -106,34 +107,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
-            platform: linux-x64-gnu
-            target: x86_64-unknown-linux-gnu
-            exe: atlascode-rs
-          - runner: ubuntu-24.04-arm
-            platform: linux-arm64-gnu
-            target: aarch64-unknown-linux-gnu
-            exe: atlascode-rs
-          - runner: macos-15-intel
-            platform: darwin-x64
-            target: x86_64-apple-darwin
-            exe: atlascode-rs
-          - runner: macos-15
-            platform: darwin-arm64
-            target: aarch64-apple-darwin
-            exe: atlascode-rs
-          - runner: windows-latest
-            platform: win32-x64-msvc
-            target: x86_64-pc-windows-msvc
-            exe: atlascode-rs.exe
-          - runner: windows-11-arm
-            platform: win32-arm64-msvc
-            target: aarch64-pc-windows-msvc
-            exe: atlascode-rs.exe
+          - {runner: ubuntu-latest, platform: linux-x64-gnu, target: x86_64-unknown-linux-gnu, exe: atlascode-rs}
+          - {runner: ubuntu-24.04-arm, platform: linux-arm64-gnu, target: aarch64-unknown-linux-gnu, exe: atlascode-rs}
+          - {runner: macos-15-intel, platform: darwin-x64, target: x86_64-apple-darwin, exe: atlascode-rs}
+          - {runner: macos-15, platform: darwin-arm64, target: aarch64-apple-darwin, exe: atlascode-rs}
+          - {runner: windows-latest, platform: win32-x64-msvc, target: x86_64-pc-windows-msvc, exe: atlascode-rs.exe}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc, target: aarch64-pc-windows-msvc, exe: atlascode-rs.exe}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-prepared
           path: input
@@ -141,8 +124,8 @@ jobs:
         run: tar -xzf input/source.tar.gz
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
-      - name: Native toolchain and bridge
+          node-version: '24.21.0'
+      - name: Native toolchain and complete bridge suite
         working-directory: atlascode-rs
         shell: bash
         run: |
@@ -202,19 +185,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-prepared
           path: input
       - run: tar -xzf input/source.tar.gz
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: atlascode-rs-native-*
           path: atlascode-rs/
           merge-multiple: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version: '24.21.0'
       - name: Build real distributable packages
         working-directory: atlascode-rs
         shell: bash
@@ -228,7 +211,7 @@ jobs:
           node scripts/runtime/verify-staged-bun-runtimes.mjs --dist-platform dist-platform | tee ../package-evidence/staged-runtime-verify.log
           node scripts/npm/generate-npm-packages.mjs 2>&1 | tee ../package-evidence/npm-generate.log
           node scripts/npm/verify-npm-packages.mjs 2>&1 | tee ../package-evidence/npm-verify.log
-          node scripts/npm/smoke-npm-package-install.mjs 2>&1 | tee ../package-evidence/npm-smoke.log
+          node scripts/npm/smoke-npm-package-install.mjs --real-binary --no-system-runtime 2>&1 | tee ../package-evidence/npm-smoke.log
           node scripts/install/generate-install-archives.mjs 2>&1 | tee ../package-evidence/archives-generate.log
           node scripts/install/verify-install-archives.mjs 2>&1 | tee ../package-evidence/archives-verify.log
           mkdir -p dist-pack
@@ -284,41 +267,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
-            platform: linux-x64-gnu
-          - runner: ubuntu-24.04-arm
-            platform: linux-arm64-gnu
-          - runner: macos-15-intel
-            platform: darwin-x64
-          - runner: macos-15
-            platform: darwin-arm64
-          - runner: windows-latest
-            platform: win32-x64-msvc
-          - runner: windows-11-arm
-            platform: win32-arm64-msvc
+          - {runner: ubuntu-latest, platform: linux-x64-gnu}
+          - {runner: ubuntu-24.04-arm, platform: linux-arm64-gnu}
+          - {runner: macos-15-intel, platform: darwin-x64}
+          - {runner: macos-15, platform: darwin-arm64}
+          - {runner: windows-latest, platform: win32-x64-msvc}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-prepared
           path: input
       - shell: bash
         run: tar -xzf input/source.tar.gz
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-install-${{ matrix.platform }}
           path: atlascode-rs/dist-install
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
-      - name: Execute extracted portable app without system Node or Bun
+          node-version: '24.21.0'
+      - name: Execute real portable app without system Node or Bun
         working-directory: atlascode-rs
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ../smoke-evidence/${{ matrix.platform }}
-          node scripts/install/smoke-install-archive.mjs --platform ${{ matrix.platform }} 2>&1 | tee ../smoke-evidence/${{ matrix.platform }}/archive-smoke.log
+          node scripts/install/smoke-install-archive.mjs --platform ${{ matrix.platform }} --real-binary --no-system-runtime 2>&1 | tee ../smoke-evidence/${{ matrix.platform }}/archive-smoke.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
