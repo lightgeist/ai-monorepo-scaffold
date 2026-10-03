@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg libgl1 fonts-liberation
-          python -m pip install pytest pillow httpx pydantic sqlalchemy greenlet numpy opencv-python-headless python-dotenv 'google-genai==1.75.0' fastapi boto3 PyJWT email-validator python-multipart build setuptools wheel uvicorn requests tenacity rich scipy beautifulsoup4 playwright
+          python -m pip install pytest 'pillow==12.2.0' 'httpx==0.28.1' pydantic sqlalchemy greenlet numpy opencv-python-headless 'python-dotenv==1.2.2' 'google-genai==1.75.0' 'fastapi==0.136.1' 'boto3==1.43.4' PyJWT email-validator 'python-multipart==0.0.27' build setuptools wheel 'uvicorn==0.46.0' requests tenacity rich scipy 'beautifulsoup4==4.14.3' playwright
           npm install -g agent-browser
           agent-browser install --with-deps
           python -m playwright install --with-deps chromium
@@ -43,16 +43,36 @@ jobs:
           unzip -q build/upstream.zip -d build
           mv build/openshorts-* build/upstream
           python tools/atlasshorts/build_fork.py build/upstream build/AtlasShorts-v0.1.0-rc.1
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          r=Path('build/AtlasShorts-v0.1.0-rc.1')
+          config={'compilerOptions':{'target':'ES2020','lib':['ES2020','DOM','DOM.Iterable'],'module':'ESNext','moduleResolution':'node','jsx':'react-jsx','allowJs':True,'noEmit':True,'skipLibCheck':True,'esModuleInterop':True,'resolveJsonModule':True},'include':['src']}
+          (r/'dashboard/tsconfig.json').write_text(json.dumps(config,indent=2)+'\n')
+          (r/'tsconfig.json').write_text('{"compilerOptions":{}}\n')
+          PY
           cp build/AtlasShorts-v0.1.0-rc.1/LICENSE build/AtlasShorts-v0.1.0-rc.1/cli/LICENSE
           cp build/AtlasShorts-v0.1.0-rc.1/NOTICE build/AtlasShorts-v0.1.0-rc.1/cli/NOTICE
           mkdir -p build/AtlasShorts-v0.1.0-rc.1/validation build/AtlasShorts-v0.1.0-rc.1/scripts/release
           cp tools/atlasshorts/*.py build/AtlasShorts-v0.1.0-rc.1/scripts/release/
+          cp .github/workflows/atlasshorts-release.yml build/AtlasShorts-v0.1.0-rc.1/scripts/release/workflow-reference.yml
           python build/AtlasShorts-v0.1.0-rc.1/assets/make_watermark.py
       - name: Build actual dashboard
         working-directory: build/AtlasShorts-v0.1.0-rc.1/dashboard
         run: |
           set -o pipefail
           npm ci --no-audit --no-fund 2>&1 | tee ../validation/dashboard-install.log
+          python - <<'PY'
+          from pathlib import Path
+          root=Path('node_modules'); texts=[]
+          for p in sorted(root.rglob('*')):
+              if p.is_file() and p.name.lower().startswith(('license','licence','copying','notice')) and p.suffix.lower() in {'','.txt','.md','.rst'}:
+                  try: text=p.read_text()
+                  except UnicodeError: continue
+                  texts.append('\n\n===== '+p.relative_to(root).as_posix()+' =====\n'+text)
+          Path('public/THIRD-PARTY-LICENSES.txt').write_text('Dependency license texts from the locked dashboard build.\n'+''.join(texts))
+          print('Preserved license/notice documents:',len(texts))
+          PY
           npm run build 2>&1 | tee ../validation/dashboard-build.log
       - name: Build and test optional renderer
         working-directory: build/AtlasShorts-v0.1.0-rc.1/render-service
