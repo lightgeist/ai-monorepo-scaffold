@@ -1,0 +1,33 @@
+name: Nearby isolated Android toolchain
+on:
+  push:
+    branches: [build/nearby-toolchain-20261004]
+    paths: [.github/workflows/nearby-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare Android compiler tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+          mkdir -p "$RUNNER_TEMP/nearby-toolchain"
+          cp "$SDK/platforms/android-35/android.jar" "$RUNNER_TEMP/nearby-toolchain/android.jar"
+          cp -a "$SDK/build-tools/35.0.0" "$RUNNER_TEMP/nearby-toolchain/build-tools"
+          curl --fail --location --retry 2 https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar -o "$RUNNER_TEMP/nearby-toolchain/zxing-3.5.3.jar"
+          cd "$RUNNER_TEMP/nearby-toolchain"
+          sha256sum android.jar zxing-3.5.3.jar build-tools/aapt2 build-tools/lib/d8.jar > SHA256SUMS
+          printf 'Android SDK platform 35; build tools 35.0.0; ZXing core 3.5.3.\nUsed only for the requested local Nearby APK build. No application source or user data is included.\n' > BUILD-TOOLS.txt
+          tar -czf "$RUNNER_TEMP/nearby-toolchain.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nearby-android-toolchain
+          path: ${{ runner.temp }}/nearby-toolchain.tar.gz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
