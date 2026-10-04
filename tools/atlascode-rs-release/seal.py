@@ -21,16 +21,34 @@ def node(path):
     return out
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--run',type=int,required=True);p.add_argument('--builder',required=True);p.add_argument('--root',type=Path,default=Path('release-final'));a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--run',type=int,required=True);p.add_argument('--builder',required=True)
+    p.add_argument('--windows-run',type=int,required=True);p.add_argument('--windows-builder',required=True)
+    p.add_argument('--root',type=Path,default=Path('release-final'));a=p.parse_args()
     root=a.root.resolve();need(not root.exists(),'Destination exists');root.mkdir()
-    meta=api(f'actions/runs/{a.run}');need(meta['status']=='completed' and meta['conclusion']=='success' and meta['head_sha']==a.builder,'Portable run gate failed')
-    jobs=api(f'actions/runs/{a.run}/jobs?per_page=100');need(jobs['total_count']==7 and len(jobs['jobs'])==7 and all(j['conclusion']=='success' for j in jobs['jobs']),'Incomplete seven-job portable matrix')
-    def download(name,destination):
-        run('gh','run','download',a.run,'--repo',REPO,'--name',name,'--dir',destination)
+    meta=api(f'actions/runs/{a.run}')
+    need(meta['status']=='completed' and meta['head_sha']==a.builder and meta['conclusion'] in ('success','failure'),'Unexpected portable run identity/status')
+    jobs=api(f'actions/runs/{a.run}/jobs?per_page=100')
+    need(jobs['total_count']==7 and len(jobs['jobs'])==7,'Incomplete seven-job portable matrix')
+    need(next(j for j in jobs['jobs'] if j['name']=='package')['conclusion']=='success','Final packaging/quality job failed')
+    for platform in PLATFORMS:
+        matches=[j for j in jobs['jobs'] if j['name'].startswith('smoke (') and platform+')' in j['name']]
+        need(len(matches)==1,'Missing unique native smoke job: '+platform);job=matches[0]
+        need(next(s for s in job['steps'] if s['name']=='Real portable runtime and failure controls')['conclusion']=='success','Actual portable runtime failed: '+platform)
+        if not platform.startswith('win32'):need(job['conclusion']=='success','Non-Windows smoke job failed')
+        failures=[s['name'] for s in job['steps'] if s['conclusion']=='failure']
+        need(not failures or (platform.startswith('win32') and failures==['Windows installer ownership and version-guard regression']),'Unexpected failed step')
+    wm=api(f'actions/runs/{a.windows_run}');wj=api(f'actions/runs/{a.windows_run}/jobs?per_page=100')
+    need(wm['status']=='completed' and wm['conclusion']=='success' and wm['head_sha']==a.windows_builder,'Isolated Windows confirmation did not pass')
+    need(wj['total_count']==2 and len(wj['jobs'])==2 and all(j['conclusion']=='success' for j in wj['jobs']),'Incomplete Windows confirmation matrix')
+    def download(name,destination,run_id=None):
+        run('gh','run','download',run_id or a.run,'--repo',REPO,'--name',name,'--dir',destination)
     evidence=root/'evidence';assets=root/'assets';inputs=root/'input'
     download('atlascode-rs-finish-evidence',evidence);download('atlascode-rs-finish-assets',assets);download('atlascode-rs-finish-source',inputs)
     dump(evidence/'final-run.json',meta);dump(evidence/'final-jobs.json',jobs)
+    dump(evidence/'windows-confirmation-run.json',wm);dump(evidence/'windows-confirmation-jobs.json',wj)
     for platform in PLATFORMS:download('atlascode-rs-finish-smoke-'+platform,evidence/'smoke')
+    for platform in ('win32-x64-msvc','win32-arm64-msvc'):
+        download('atlascode-rs-windows-confirm-'+platform,evidence/'windows-confirmed',a.windows_run)
     source=root/'source';run('git','clone',inputs/'source-history.bundle',source)
     commit=(evidence/'source-commit.txt').read_text().strip();tree=(evidence/'source-tree.txt').read_text().strip()
     run('git','checkout','--detach',commit,cwd=source);need(run('git','rev-parse','HEAD^{tree}',cwd=source)==tree,'Source tree mismatch')
@@ -62,13 +80,16 @@ def main():
         smoke=(evidence/'smoke'/platform/'archive-smoke.log').read_text(errors='replace')
         for expected in ['Verified application PATH has no system Node.js or Bun executable.','Bridge runtime contract passed','missing bridge_runtime fails closed','missing bridge_script fails closed','Smoke-tested install archive '+archive.name]:need(expected in smoke,'Missing portable runtime evidence: '+expected)
         if platform.startswith('win32'):
-            need('PowerShell installer version guard tests passed' in (evidence/'smoke'/platform/'install-version.log').read_text(),'Windows version-guard tests missing')
+            confirmed=evidence/'windows-confirmed'/platform
+            need((confirmed/'source-tree.txt').read_text().strip()==tree,'Windows installer suite used different source')
+            need('PowerShell installer version guard tests passed' in (confirmed/'install-version.log').read_text(),'Windows version-guard tests missing')
+            need('PowerShell installation identity, PATH updates, and confirmed script/npm cleanup passed' in (confirmed/'install-path.log').read_text(),'Windows ownership tests missing')
         observations.append({'platform':platform,'rust_passed':sum(int(m[1]) for m in matches),'bridge_passed':439,'pty_scenarios':16,'portable_runtime':'passed','negative_controls':'passed'})
     quality={k:node(evidence/(k+'.log')) for k in ['bridge-tests','node-core-tests','install-progress-tests']}
     for i in range(1,11):need(node(evidence/f'install-path-{i}.log')['pass']==2,'Installer cancellation repeat failed')
     audit=json.loads((evidence/'dependency-audit-run.json').read_text());need(audit['conclusion']=='success','Dependency audit failed')
     ledger=json.loads((source/'REBRAND-LEDGER.json').read_text())
-    report={'schema':'atlascode-rs-release-verification/v2','name':'atlascode-rs','version':'0.1.0','release_kind':'unsigned preview','passed':True,'upstream_commit':'ddcf1eb5513b02ca2a68964220f115da0a69a80a','source_commit':commit,'source_tree':tree,'native_baseline_commit':BASE,'native_inputs_unchanged':len(proof['files']),'native_run':37164321262,'portable_run':a.run,'dependency_audit_run':37164474484,'platforms':observations,'quality':quality,'installer_path_repetitions':10,'brand_checks':len(brand['checks']),'rebrand_changes':dict(Counter(x['change'] for x in ledger['changes'])),'archives':archives,'limitations':['No authenticated provider or billable model task tested.','PTY conversations use a scripted NDJSON peer.','Not macOS-notarized or Windows Authenticode-signed.','No public npm/Cargo publication.','Provider-owned state may be shared with official CLI.','No physical-device UX, penetration test, performance benchmark or blanket OS-version compatibility claim.','Native build and final source commits differ only outside the checked 323-file native input boundary; final installer changes are separately qualified.']}
+    report={'schema':'atlascode-rs-release-verification/v3','name':'atlascode-rs','version':'0.1.0','release_kind':'unsigned preview','passed':True,'upstream_commit':'ddcf1eb5513b02ca2a68964220f115da0a69a80a','source_commit':commit,'source_tree':tree,'native_baseline_commit':BASE,'native_inputs_unchanged':len(proof['files']),'native_run':37164321262,'portable_run':a.run,'portable_workflow_conclusion':meta['conclusion'],'windows_confirmation_run':a.windows_run,'dependency_audit_run':37164474484,'platforms':observations,'quality':quality,'installer_path_repetitions':10,'brand_checks':len(brand['checks']),'rebrand_changes':dict(Counter(x['change'] for x in ledger['changes'])),'archives':archives,'limitations':['No authenticated provider or billable model task tested.','PTY conversations use a scripted NDJSON peer.','Not macOS-notarized or Windows Authenticode-signed.','No public npm/Cargo publication.','Provider-owned state may be shared with official CLI.','No physical-device UX, penetration test, performance benchmark or blanket OS-version compatibility claim.','Native build and final source commits differ only outside the checked native input boundary; final installer changes are separately qualified.'],'ci_wrapper_correction':'The initial Windows wrapper checked LASTEXITCODE leaked by intentional negative-test children. Both unchanged suites reported success; the two-host confirmation reran them in separate pwsh -File processes and checked actual suite exit statuses. Original workflow conclusions are retained, not relabeled.'}
     dump(assets/'VERIFICATION.json',report);dump(evidence/'VERIFICATION.json',report)
     table='\n'.join(f"| {x['platform']} | {x['rust_passed']} | 439 | Passed | Passed |" for x in observations)
     text=f'''# atlascode-rs 0.1.0 — release verification
@@ -85,14 +106,20 @@ It retains the official Claude Agent SDK 0.3.288 and private Bun 1.4.0 runtime.
 |---|---:|---:|---|---|
 {table}
 
-Final portable and installer run: https://github.com/{REPO}/actions/runs/{a.run}
+Final packaging and actual portable runtime: https://github.com/{REPO}/actions/runs/{a.run}
+Independent Windows installer confirmation: https://github.com/{REPO}/actions/runs/{a.windows_run}
 Original native build/test run: https://github.com/{REPO}/actions/runs/37164321262
 Dependency policy audit: https://github.com/{REPO}/actions/runs/37164474484
 
 The original native run is not described as wholly successful: all six native
 Rust/bridge/build steps passed, while installer failures blocked packaging.
-Those failures were corrected and the final seven-job portable/installer run
-passed. No failed test was silently discarded.
+Those failures were corrected. Final packaging and all six actual archive runtime
+steps passed. The Windows CI wrapper then incorrectly returned LASTEXITCODE left
+by an intentionally failing test child, although both suites reported success.
+Two additional native Windows jobs reran the unchanged suites in separate
+PowerShell processes and verified their actual successful exit statuses.
+The release gate requires those jobs; original workflow conclusions remain in
+the evidence. No failed assertion was removed or silently discarded.
 
 Each final archive runs its actual binary and bundled Bun/SDK bridge with system
 Node.js and Bun removed from the application's PATH. Version, help, completion,
@@ -157,6 +184,6 @@ Checksums are integrity evidence, not OS code signing.
     records=[{'file':f.name,'bytes':f.stat().st_size,'sha256':sha256(f)} for f in sorted(assets.iterdir()) if f.is_file()]
     (assets/'CHECKSUMS.sha256').write_text(''.join(f"{x['sha256']}  {x['file']}\n" for x in records))
     records.append({'file':'CHECKSUMS.sha256','bytes':(assets/'CHECKSUMS.sha256').stat().st_size,'sha256':sha256(assets/'CHECKSUMS.sha256')})
-    dump(root/'asset-manifest.json',{'source_commit':commit,'source_tree':tree,'run':a.run,'files':records})
+    dump(root/'asset-manifest.json',{'source_commit':commit,'source_tree':tree,'run':a.run,'windows_run':a.windows_run,'files':records})
     print('SEALED',tree,len(archives),'verified native archives')
 if __name__=='__main__':main()
