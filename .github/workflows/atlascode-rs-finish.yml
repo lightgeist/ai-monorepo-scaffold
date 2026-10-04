@@ -56,7 +56,7 @@ jobs:
           assert pathlib.Path('audit/audited-source-tree.txt').read_text().strip()=='80ab19b77a911cf0b89d97c36c9e2550b54c8ce4'
           PY
           git clone input/atlascode-rs-history.bundle source
-          git -C source checkout --detach 8a8a073ee47dc3155e43991a409b7d46a76a9d3c
+          git -C source checkout -b atlascode-rs-final 8a8a073ee47dc3155e43991a409b7d46a76a9d3c
           test "$(git -C source rev-parse HEAD^{tree})" = 80ab19b77a911cf0b89d97c36c9e2550b54c8ce4
           python3 tools/atlascode-rs-release/finish-installers.py source | tee final/evidence/installer-repairs.log
           cp tools/atlascode-rs-release/finish-installers.py source/tools/rebrand-finish-installers.py
@@ -94,7 +94,11 @@ jobs:
           node scripts/npm/smoke-npm-package-install.mjs --real-binary --no-system-runtime 2>&1 | tee ../final/evidence/npm-smoke.log
           node scripts/install/generate-install-archives.mjs 2>&1 | tee ../final/evidence/archive-generate.log
           node scripts/install/verify-install-archives.mjs 2>&1 | tee ../final/evidence/archive-verify.log
+          mv dist-install dist-install-real
+          node scripts/install/generate-install-archives.mjs --mock-binaries 2>&1 | tee ../final/evidence/mock-archive-generate.log
           node --test scripts/install/install-progress.test.mjs 2>&1 | tee ../final/evidence/install-progress-tests.log
+          rm -rf dist-install
+          mv dist-install-real dist-install
           cp -r dist-install/manifests ../final/evidence/install-manifests
           mkdir -p ../final/assets
           cp dist-install/*.tar.gz dist-install/*.zip ../final/assets/
