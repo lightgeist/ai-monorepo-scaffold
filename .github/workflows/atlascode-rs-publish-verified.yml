@@ -23,13 +23,19 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest -v test_verify_archives.py 2>&1 | tee ../../../auditor-tests.log
-      - name: Require completed portable matrix
-        run: gh run watch 37194909957 --repo "$GH_REPO" --exit-status --interval 20
+      - name: Require completed evidence runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The seal checks actual step outcomes; it does not relabel the stale
+          # Windows wrapper exit status as a successful original workflow.
+          gh run watch 37194909957 --repo "$GH_REPO" --interval 20
+          gh run watch 37195342387 --repo "$GH_REPO" --exit-status --interval 20
       - name: Verify archive bytes and assemble source-bound evidence
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/atlascode-rs-release/seal.py --run 37194909957 --builder 8fb8cd7531e2959ac48fa205e784ce6bd5de3e1c --root release-final 2>&1 | tee seal.log
+          python3 tools/atlascode-rs-release/seal.py --run 37194909957 --builder 8fb8cd7531e2959ac48fa205e784ce6bd5de3e1c --windows-run 37195342387 --windows-builder 2b6f815e1f46d55decfc562c2fd8abfaf59ce247 --root release-final 2>&1 | tee seal.log
       - name: Import exact source without modifying main
         shell: bash
         run: |
@@ -84,3 +90,38 @@ jobs:
             release-final/assets/VERIFICATION.json
             release-final/assets/CHECKSUMS.sha256
           retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-darwin-arm64
+          path: release-final/assets/atlascode-rs-0.1.0-darwin-arm64.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-darwin-x64
+          path: release-final/assets/atlascode-rs-0.1.0-darwin-x64.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-linux-x64-gnu
+          path: release-final/assets/atlascode-rs-0.1.0-linux-x64-gnu.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-linux-arm64-gnu
+          path: release-final/assets/atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-win32-x64-msvc
+          path: release-final/assets/atlascode-rs-0.1.0-win32-x64-msvc.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-win32-arm64-msvc
+          path: release-final/assets/atlascode-rs-0.1.0-win32-arm64-msvc.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-evidence
+          path: release-final/assets/atlascode-rs-0.1.0-evidence.zip
+          compression-level: 0
