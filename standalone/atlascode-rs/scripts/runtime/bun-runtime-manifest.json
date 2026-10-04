@@ -1,0 +1,43 @@
+{
+  "manifestVersion": 1,
+  "version": "1.4.0",
+  "checksumSourceUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/SHASUMS256.txt",
+  "assets": {
+    "darwin-arm64": {
+      "assetName": "bun-darwin-aarch64.zip",
+      "archiveBinaryPath": "bun-darwin-aarch64/bun",
+      "sha256": "c669e97f6164e1c96e0701748db98dfa77492908cbd8394c7557134a735de381",
+      "binarySha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf"
+    },
+    "darwin-x64": {
+      "assetName": "bun-darwin-x64-baseline.zip",
+      "archiveBinaryPath": "bun-darwin-x64-baseline/bun",
+      "sha256": "da9b9f1b4ba766c6f299711f38dfaa98623e1ed9c40896aa53db803c52ec1fa0",
+      "binarySha256": "ca8a18d0116d7b6b19f53bb0d8c48e487c0757cab4dc3f4f8cc5e43a44cd75d8"
+    },
+    "linux-x64-gnu": {
+      "assetName": "bun-linux-x64-baseline.zip",
+      "archiveBinaryPath": "bun-linux-x64-baseline/bun",
+      "sha256": "184fb4595f0d401a217cf7c78c1bc430ba83314dab7a8b94805babbf7fa7097f",
+      "binarySha256": "33d56b070be6a9e3da0ab013038b43d1645d0534ca811ecdba4472599117eb4b"
+    },
+    "linux-arm64-gnu": {
+      "assetName": "bun-linux-aarch64.zip",
+      "archiveBinaryPath": "bun-linux-aarch64/bun",
+      "sha256": "4b1a332ee861983eb93bcfe6f770fff94e3e31b2c388bdaea3c8ed35e58eed0e",
+      "binarySha256": "086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9"
+    },
+    "win32-x64-msvc": {
+      "assetName": "bun-windows-x64-baseline.zip",
+      "archiveBinaryPath": "bun-windows-x64-baseline/bun.exe",
+      "sha256": "b929c54a9badb104a16dedd23aab6152c86793ae653d4e6b13983ffd0c882a66",
+      "binarySha256": "627d2e4775c24bdedee2cd7ccc18dcadae061e5345274ab6e3c4c797927bfb8f"
+    },
+    "win32-arm64-msvc": {
+      "assetName": "bun-windows-aarch64.zip",
+      "archiveBinaryPath": "bun-windows-aarch64/bun.exe",
+      "sha256": "f473bfe2df73ee770548c93dd5d380aea7120c218ec2aa1afdd0bbba7bf18c47",
+      "binarySha256": "00cf2c040f04281cf9324282a84338c2dfe6597007bf73b7ee888d512297d71f"
+    }
+  }
+}

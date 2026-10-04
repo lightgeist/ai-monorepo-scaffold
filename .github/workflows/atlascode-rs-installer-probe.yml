@@ -1,0 +1,61 @@
+name: atlascode-rs installer regression probe
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-installer-probe.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-prepared
+          run-id: 37164321262
+          github-token: ${{ github.token }}
+          path: input
+      - shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf input/source.tar.gz
+          python3 tools/atlascode-rs-release/installer-fixes.py atlascode-rs
+          mkdir probe-evidence
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.21.0'
+      - name: Windows version and path guards in fresh PowerShell processes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & pwsh -NoLogo -NoProfile -File ./atlascode-rs/scripts/install/test-install-path.ps1 2>&1 | Tee-Object probe-evidence/windows-path.log
+          if ($LASTEXITCODE -ne 0) { throw 'PATH test failed' }
+          & pwsh -NoLogo -NoProfile -File ./atlascode-rs/scripts/install/test-install-version-guard.ps1 2>&1 | Tee-Object probe-evidence/windows-version.log
+          if ($LASTEXITCODE -ne 0) { throw 'Version test failed' }
+      - name: Unix actual cancellation and installer guards
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: atlascode-rs
+        run: |
+          set -euo pipefail
+          node --test scripts/install/install-path.test.mjs scripts/install/install-version-guard.test.mjs 2>&1 | tee ../probe-evidence/unix-installer.log
+      - name: Collect prior Windows failure tail
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/lightgeist/ai-monorepo-scaffold/actions/jobs/111324112238/logs | tail -100 > probe-evidence/prior-windows-job-tail.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-installer-probe-${{ matrix.os }}
+          path: probe-evidence/
+          retention-days: 30

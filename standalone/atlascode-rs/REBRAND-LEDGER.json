@@ -1,0 +1,979 @@
+{
+  "schema": "atlascode-rs-rebrand-ledger/v2",
+  "upstream_commit": "ddcf1eb5513b02ca2a68964220f115da0a69a80a",
+  "self_excluded": "REBRAND-LEDGER.json",
+  "changes": [
+    {
+      "path": ".github/CODEOWNERS",
+      "change": "modified",
+      "upstream_sha256": "98d70d18feb67e21aeacdc6e3383337c92d1182654898972c311b98a8cf3087d",
+      "fork_sha256": "b43a8b0dbc17be2a6a2011322136da86374c1a5afe3c9bd7af7d1ce7010a1dbf"
+    },
+    {
+      "path": ".github/FUNDING.yml",
+      "change": "removed",
+      "upstream_sha256": "219ebde2ec6e3fefde7c37b6cbfbe036467ae2c1046ab678f1cf195513fa9e26",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "change": "modified",
+      "upstream_sha256": "b8d9ebb5b92efa4a99242584eb72e87098bde7cc8280b5d93e97f0732e5426e9",
+      "fork_sha256": "e6739e04063c94f2d8307862f4841d8118e4a1edfbb8dad8c78c8a61ab14e819"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "change": "modified",
+      "upstream_sha256": "42074ffab2c409dc094d502f845dcd65cf567e8a9dccf89cb18234a4bb8182f0",
+      "fork_sha256": "13064e7bea658e01e718b414fbb7b3b244f36411fe25ee2055c151f7b534547a"
+    },
+    {
+      "path": ".github/workflows/_agent-sdk.yml",
+      "change": "removed",
+      "upstream_sha256": "4a8b878a81a7d440e51894a263b82c74f76eab8ae7c870dbfc99a0a9ac50745e",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/_release-build.yml",
+      "change": "removed",
+      "upstream_sha256": "fe1f15f2ad706fd4207ea736bfb0de02405ae52b305f3fbff8b1022dd37090d1",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "5f7eb7903d5007cc668c46181a098a46969766a5d03c4718aaf874561511becb"
+    },
+    {
+      "path": ".github/workflows/codeql.yml",
+      "change": "removed",
+      "upstream_sha256": "f3f7605c3ce0e1a0cd4d1570a3b72b328867401de2b64ad397d9c84575dc84bd",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/dependency-monitor.yml",
+      "change": "removed",
+      "upstream_sha256": "ccc64f186960017fa47e558a3e53cc68d43701d6cf8e6e9e09e0bd1466a92036",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/docs.yml",
+      "change": "removed",
+      "upstream_sha256": "2ffaa1589543294e7274cb4c1b4b9582cc3d88a758001a1866a71a5ab919f1a8",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/nightly.yml",
+      "change": "removed",
+      "upstream_sha256": "ec24fe69ec3a0c5c4369fe847ab1c6bac1f9ac17743279bae4b78fc477b9c50d",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/pr-title.yml",
+      "change": "removed",
+      "upstream_sha256": "603dced174acc2f7a3d2eef14d5dc2d9ac681570d68081563346ffdcd2466e83",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/pr.yml",
+      "change": "removed",
+      "upstream_sha256": "e1138e75d7cf269f635894331a4c638ca16e5555b8a6f869a5980b789bdce19d",
+      "fork_sha256": null
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "change": "removed",
+      "upstream_sha256": "617a10f61b473ed4ef4375e8b9ade2ead9068f21719f5c1bba5f04692476ceb1",
+      "fork_sha256": null
+    },
+    {
+      "path": "AGENTS.md",
+      "change": "modified",
+      "upstream_sha256": "552536b771a02de525393a47429644d9e9379de3e8848d773f87eac3faf3e40d",
+      "fork_sha256": "216b32730170dba0fd020c2ae39882309d05b0d7632b7552ff77550a4b4e3843"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "change": "modified",
+      "upstream_sha256": "78fb04694ae2692b79e7635013230afb1b7305fd7e658dc6caa2cacf8ee0f58d",
+      "fork_sha256": "668e7fdf9bb5d82a1d13a003234805eabc763beda8019632a917227dad5e3de1"
+    },
+    {
+      "path": "CODE_OF_CONDUCT.md",
+      "change": "modified",
+      "upstream_sha256": "ccbfe9da240af23a45649834847cbbe7d63a5328e21b00a421579e0e5e199ba4",
+      "fork_sha256": "b2e03b893fad5814fd1cefe6afc2aa87243649399f34f764d64aaa7f5d1aff01"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "change": "modified",
+      "upstream_sha256": "db0943ade71263684699c8b69432535b939f9c2726ca2f590bcfd25805a2e085",
+      "fork_sha256": "edcd1f7c9aeac8a167f3c764dbd9a2a5e0248c92d41ee057751285bb566db0f4"
+    },
+    {
+      "path": "Cargo.lock",
+      "change": "modified",
+      "upstream_sha256": "3a3f0d2e573571f1f328e2be1a95b83242c3e4e078081188242656aaeb3ea986",
+      "fork_sha256": "d333caa588f9cfb689a12d0666db8ee81628857f0418f0d3cc3f111d97541f1b"
+    },
+    {
+      "path": "Cargo.toml",
+      "change": "modified",
+      "upstream_sha256": "1597aa20539ab4bb7623ab0165b815619f584a05bb16db9d767e51f4957d4f8e",
+      "fork_sha256": "8bda9adb5488fe3643205562e59e2d65d9150ebb2cf011b376c8d50df9bf2325"
+    },
+    {
+      "path": "MIGRATION.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "e0496178e0a7572490ba543deda7fa8f724a0880f207bc377745db9fa535655a"
+    },
+    {
+      "path": "NATIVE-INPUTS.json",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "1a2a6a6b979a097a8b2e853d27f279a60c9cc9e742da0597b86f43ee885bf3a9"
+    },
+    {
+      "path": "NOTICE",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "6727ae6143bce1bf85d688fd66eb03c879859930dd1e5452daca46f010c32846"
+    },
+    {
+      "path": "PROVENANCE.json",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "b6c6234e68e3ca8b0f7d2e2c9f1f042f355a92b597d0a228e7999037991a6ce6"
+    },
+    {
+      "path": "README.md",
+      "change": "modified",
+      "upstream_sha256": "39a8c1a6a58ce8b7569489da88d646fd75270e1e493a9d90fcb0e874882966aa",
+      "fork_sha256": "0371a2712be2f2ef4e158615ff6dae0ef062ca9f93df205c5d0307d294b2ba03"
+    },
+    {
+      "path": "SECURITY.md",
+      "change": "modified",
+      "upstream_sha256": "dc5cd58c6d71c7ab1713b90236ecbfb7542fd45e64ee5c0d7a6e0acdd968ab0c",
+      "fork_sha256": "69f4758ec8e840210510330ba42939d32d9bca5cff7f64bc8bf61821ee24040b"
+    },
+    {
+      "path": "START-HERE.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "7715c06067705630a09c4830f39389b7aa814abf6ef66b994256bf6b02401b3c"
+    },
+    {
+      "path": "agent-sdk/README.md",
+      "change": "modified",
+      "upstream_sha256": "a4e2d3d3bb10e7b5253900b61081d14df8e07cd6d792f588957eb7e1f2a6fb57",
+      "fork_sha256": "976db7f0c35349e6159cf252ecd4437b688f7ae0bc5f025aefbfb59385a95611"
+    },
+    {
+      "path": "agent-sdk/package-lock.json",
+      "change": "modified",
+      "upstream_sha256": "d7892297858131e68256a1657cdb6c3630f9e8cd7856278785ba483a2120414e",
+      "fork_sha256": "7c17c32c6d62c52608eba63a7a49b3b4ee24e3dabc5c23777344985b95e539bf"
+    },
+    {
+      "path": "agent-sdk/package.json",
+      "change": "modified",
+      "upstream_sha256": "8a20f2156e58f193426f29ae4f1835475505c45fc71456ec10196b6b93fdf19c",
+      "fork_sha256": "4ebf561929e4817f70e7a4f7ef38eb8620a76d713ab99ef809ce99c34c7fd06e"
+    },
+    {
+      "path": "agent-sdk/scripts/bridge-runtime-contract.mjs",
+      "change": "modified",
+      "upstream_sha256": "97fe8c06e92361fb21f3bb0bc3006eca2668c7afdfc400f60374ac9790ed9e68",
+      "fork_sha256": "4792b190698d7a4a5c14b8e733a9c24485524b2109f0d16657bd495c99da0e7f"
+    },
+    {
+      "path": "agent-sdk/src/bridge.contract.test.ts",
+      "change": "modified",
+      "upstream_sha256": "9730a65aee643f3d9004c7309c098d85b311e81155ea8b30c871c2de0c289104",
+      "fork_sha256": "a38c86b310af403ea4c2e2d94fffda1cd05a6b2d4026f709a0bb3863c6ca383b"
+    },
+    {
+      "path": "agent-sdk/src/bridge.test.ts",
+      "change": "modified",
+      "upstream_sha256": "fbd45470e57ddbeffaad103ed548a06b0c9652d81db3343855ba423bd5616544",
+      "fork_sha256": "71177051f2396657c50c51fecfd1828c24b9221c6f7fec8932ff2315cb224876"
+    },
+    {
+      "path": "agent-sdk/src/bridge/command_lifecycle.ts",
+      "change": "modified",
+      "upstream_sha256": "f0f9876dbf6ea2b77eaf170adc2c0d6e78b19e1d4e9d26cf22c710ec5234432e",
+      "fork_sha256": "2423aa400ac746c62715ff796fae60c210a68f5436a324cf81e7273bd9168ba2"
+    },
+    {
+      "path": "agent-sdk/src/bridge/logger.ts",
+      "change": "modified",
+      "upstream_sha256": "df2685f3e3dd3d082a31749e938e9373d1b27e017c4c266e1e0af32a7c38daf6",
+      "fork_sha256": "7980fb3546e9cc3647b861cdee1c74b8b1cfea2d2eaf0d199f7306ffc267b788"
+    },
+    {
+      "path": "agent-sdk/src/bridge/session_lifecycle.ts",
+      "change": "modified",
+      "upstream_sha256": "92b2e524bbca71a7163327707dd851b7abbfc440789254870d3ef6ba7b7bf802",
+      "fork_sha256": "045359445929b69be8939ca9001d7af7e95ae56f450f149cfb0b55cec70815d8"
+    },
+    {
+      "path": "assets/banner.png",
+      "change": "removed",
+      "upstream_sha256": "4831a6b757a3dfa3e4c30a2a0ea7baea4fe4c19ae03fa6da1d8409e489d318ad",
+      "fork_sha256": null
+    },
+    {
+      "path": "assets/demo.gif",
+      "change": "removed",
+      "upstream_sha256": "eb22b63aca590e441fc2b7458e30231151bf33951e369462b6125e799a68c741",
+      "fork_sha256": null
+    },
+    {
+      "path": "assets/social-preview.png",
+      "change": "removed",
+      "upstream_sha256": "2d13e38b5c8d4c1324d342300bae47071f6e8b1560a31c3262d8438b6260ffe1",
+      "fork_sha256": null
+    },
+    {
+      "path": "assets/social-preview.svg",
+      "change": "removed",
+      "upstream_sha256": "1cbb053b5eddb6a442871456892d4113c89f0a91512b080e698b6c3ae69b849e",
+      "fork_sha256": null
+    },
+    {
+      "path": "bin/atlascode-rs.js",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "7960da9a2b3c7a70f0a4e421eec17638425661b58aa06b564951de60dabe607d"
+    },
+    {
+      "path": "bin/claude-rs.js",
+      "change": "removed",
+      "upstream_sha256": "91b27e276c03cf3b046687ec4723c5570380ec6a7cb9c67ea219ea91d0d399c3",
+      "fork_sha256": null
+    },
+    {
+      "path": "clippy.toml",
+      "change": "modified",
+      "upstream_sha256": "056d0743d68951019408fb4be3b185be4fae4c841ad734d3a3d4fb8cb181621d",
+      "fork_sha256": "1d44786c88a71bcb3ff794f296926cb8097e517d97aaf0b3195877ccf67e760d"
+    },
+    {
+      "path": "docs/book.toml",
+      "change": "modified",
+      "upstream_sha256": "0496181dac368dcf44d73dbec72dc28a9c20fa4817642a06e5a8e706e086c312",
+      "fork_sha256": "e59501ad48964a1442c97f97e52b632c37de520f35ba571b5a3bc235df50f34d"
+    },
+    {
+      "path": "docs/src/about.md",
+      "change": "modified",
+      "upstream_sha256": "f514f1810e1531dcab5d689d8c4171eab5f77294acd0cfbeec9e81b75e701f0d",
+      "fork_sha256": "7648086b4828cbfaa2fad89533252b79931b788278cf3aad76ba9b861814515c"
+    },
+    {
+      "path": "docs/src/architecture.md",
+      "change": "modified",
+      "upstream_sha256": "91783f3e1c5e2bd12110219b6728c2f7154c72683a3358d5a58cc255638c228e",
+      "fork_sha256": "6c869f53292ba7b514595a389840e099af1ccf8da9127cd512e04a9bdb1acf49"
+    },
+    {
+      "path": "docs/src/commands.md",
+      "change": "modified",
+      "upstream_sha256": "91aeb02d118678bb4f90fe6840352c2b494dce0ff49f2c7780bbb9dbed9da179",
+      "fork_sha256": "d1ca05cce4687ceee935d83f7f5c54a6c4b24279a8ec2d16296d1c8f2482102c"
+    },
+    {
+      "path": "docs/src/development.md",
+      "change": "modified",
+      "upstream_sha256": "bcfb5104bdd40455ab81e0d8f9acc65f4d4fd31e595f1a53c1b76691f1cdd12f",
+      "fork_sha256": "ad1633df20a7a1766cdd56d6ae67426babf5568183adfcf1b8b50243405456a8"
+    },
+    {
+      "path": "docs/src/diagnostics.md",
+      "change": "modified",
+      "upstream_sha256": "5ec5480527a5c0e7e30160128c2c488fcea3d9f2d35ef30557c3399ba95f294f",
+      "fork_sha256": "e8e3f4135d9d89024aeb3d3bb37589071e9346f7a8a3cbf7baeed0b4bafe2a5a"
+    },
+    {
+      "path": "docs/src/governance.md",
+      "change": "modified",
+      "upstream_sha256": "793ff20140d02689f8f1fb9a440bc0cb96fd807d06b199147563f201e7bac7c4",
+      "fork_sha256": "e873b7cd47384e32ae7d93371f61732236197eec4b38c2e7bc636332fc1f637a"
+    },
+    {
+      "path": "docs/src/help.md",
+      "change": "modified",
+      "upstream_sha256": "e58633f145e698da1161ade0145b502793b836462a8b67d02a8bcd03d1f43ea0",
+      "fork_sha256": "36a0056668f92491fe08f4c0e4e0c14658dca4f8729f61e04de27890275f2ee6"
+    },
+    {
+      "path": "docs/src/installation.md",
+      "change": "modified",
+      "upstream_sha256": "c52e11834b8107f0747d45b43fc1566e600307630ee6d563c5c0413d8beff527",
+      "fork_sha256": "660b40cf78a41bb128e3094290f26677a696c84a01cdbb3e6e4d866dca527cf2"
+    },
+    {
+      "path": "docs/src/settings.md",
+      "change": "modified",
+      "upstream_sha256": "ae8791f2893510fe652bcdf2035c92722f39d8b8a9f006cf0043cc2d7d1d9767",
+      "fork_sha256": "9b4d4d1fdd502e21a62e887b129df61079832f336ebe4f26eb4472e8f01b9cb2"
+    },
+    {
+      "path": "docs/src/troubleshooting.md",
+      "change": "modified",
+      "upstream_sha256": "e61f42099dd79c6f4a7800464ae347ac34ee264b7975d949aed082cfdfcbd4a2",
+      "fork_sha256": "245b6d9b82e8daa7bc6aef962649b2f9fa842dcf34cf8c0299e63f607234c55c"
+    },
+    {
+      "path": "docs/src/usage.md",
+      "change": "modified",
+      "upstream_sha256": "885a0f5cec9c22b1daea2d97bf8d2c0e585c73700c285558598456079ef6044d",
+      "fork_sha256": "df6103d59cbac31c000d627636a789538bfc14f7fc58f36f0028a3a2a5831c60"
+    },
+    {
+      "path": "docs/theme/head.hbs",
+      "change": "modified",
+      "upstream_sha256": "fe36ff0886c77e279c073a6cdd27ad0c29a902f2f2a6c1ad9c5875a1bd184e9e",
+      "fork_sha256": "174344ff20179c6a479be38a34543b971bad71c71914b7a1f0a3670add034688"
+    },
+    {
+      "path": "docs/upstream/AGENTS.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "552536b771a02de525393a47429644d9e9379de3e8848d773f87eac3faf3e40d"
+    },
+    {
+      "path": "docs/upstream/CHANGELOG.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "78fb04694ae2692b79e7635013230afb1b7305fd7e658dc6caa2cacf8ee0f58d"
+    },
+    {
+      "path": "docs/upstream/CODE_OF_CONDUCT.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "ccbfe9da240af23a45649834847cbbe7d63a5328e21b00a421579e0e5e199ba4"
+    },
+    {
+      "path": "docs/upstream/INDEX.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "4a5bbcba0e0859381eecd699b10bca257c495dcd3e1d213368125a292dfd1004"
+    },
+    {
+      "path": "docs/upstream/README.md",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "39a8c1a6a58ce8b7569489da88d646fd75270e1e493a9d90fcb0e874882966aa"
+    },
+    {
+      "path": "package-lock.json",
+      "change": "modified",
+      "upstream_sha256": "b9b34fca707dfd7c5e47ed2345ab16779822729d31fd40fd9da41c2ddaeb0632",
+      "fork_sha256": "84e6edb64d4bda510cbfdc1a032af448b1113ed5410a51efbc1d6bbf639a2eda"
+    },
+    {
+      "path": "package.json",
+      "change": "modified",
+      "upstream_sha256": "f1ba8d74699c27acba8c310d2e7776bb39c32eb30770691f1495a427e4a66456",
+      "fork_sha256": "d6e074f6c211eea797e7fd0ff93a1502a7aec75185df4cd27642967c397a323c"
+    },
+    {
+      "path": "recordings/CLAUDE.md",
+      "change": "removed",
+      "upstream_sha256": "afe49565edf5c6df15befb869c34c661b60ca7de97f6e5f4fdfa0ed63f558bd9",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/Dockerfile",
+      "change": "removed",
+      "upstream_sha256": "8ae3b90acbcd43ee332a2944eee0b7676287b0f3f41456a742ea61a5c014cbfb",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/Dockerfile.dockerignore",
+      "change": "removed",
+      "upstream_sha256": "d500b1d0be977cdccb05e25c399e0ec91afa99907ecdaf3109e6669d5a7e57bf",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/README.md",
+      "change": "removed",
+      "upstream_sha256": "f79d505ab051ff5494bc7aaa6e95213bbd3f18dd22ca3f89e3583c9e47f7fa08",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/claude.json",
+      "change": "removed",
+      "upstream_sha256": "f55c5984092aee153ca285d8aec70f890aa0c4773d82719cc9dd308a4927b99f",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/compose.yml",
+      "change": "removed",
+      "upstream_sha256": "4f3b1013098a3d59c0e49012686b65695ae92338c322697a81a1ecea1b587a77",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/demo.tape",
+      "change": "removed",
+      "upstream_sha256": "228909372652782b28b9d4c6c4be83ff29111f3b33978d0bebacbf5954b6b935",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/git-head",
+      "change": "removed",
+      "upstream_sha256": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80",
+      "fork_sha256": null
+    },
+    {
+      "path": "recordings/settings.json",
+      "change": "removed",
+      "upstream_sha256": "616b891b9dc7bb726ca87070877ad547f71dbf7b13661a6870c5dfccb0ee9115",
+      "fork_sha256": null
+    },
+    {
+      "path": "scripts/README.md",
+      "change": "modified",
+      "upstream_sha256": "d6c08ed9abded9b6d47fa7a967860820060c3899c3b819ad15798958bae4a817",
+      "fork_sha256": "42bb68a04c2f399a53d4eacfc284dbeda4d28055a02ea26b527450d30d5386c6"
+    },
+    {
+      "path": "scripts/install/generate-install-archives.mjs",
+      "change": "modified",
+      "upstream_sha256": "2b8faec162a52747a2e76cde45a4d8dc0ebb307aa9c699e9f80dd0fb0a39a13a",
+      "fork_sha256": "79edbce1835cfb5b80a8d186b4d27ad983699f1c0506c12821be7af1bc74db15"
+    },
+    {
+      "path": "scripts/install/install-path.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "1eb97b54460e69662831649569cf7ae18316121b00b8d1ef5512a1fc24be27c4",
+      "fork_sha256": "56acf33c2d44bdcd81b2850a99c5a575417827f563e1623679089774c85be69f"
+    },
+    {
+      "path": "scripts/install/install-progress.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "cdc1f38e5ef40f4df17d6ee496cf91beabb1ad2c1f2f14960462224c717c51c5",
+      "fork_sha256": "cce711299f39a1a0b00a5ba57d6d14173da410fd93dc6ed3eaed1452df8f02a6"
+    },
+    {
+      "path": "scripts/install/install-version-guard.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "e910ec17ccf87a93857942ac7b2d19b833613c822f16642de8180296ae673741",
+      "fork_sha256": "7563d6d650e7e46ae82bb1ca186de8134cae62dcbb8d6f8114454a09310672e1"
+    },
+    {
+      "path": "scripts/install/install.ps1",
+      "change": "modified",
+      "upstream_sha256": "b1c740eeed799302e98c78c3b1798662c7851769f80229efbda0ab950ec4cff3",
+      "fork_sha256": "6236a4968df9626a14835c784859e45eaa7acecf87f3f3e5a2cbb229153a9345"
+    },
+    {
+      "path": "scripts/install/install.sh",
+      "change": "modified",
+      "upstream_sha256": "708b664b50cfcb7a3997bbf318ba52784c52c5d4b012f2bc23bad5a8e943b498",
+      "fork_sha256": "33d1426f408b8fe82a7554244fcceb7b376848f4470e78eeb778588161dca5c7"
+    },
+    {
+      "path": "scripts/install/release-advisories.json",
+      "change": "modified",
+      "upstream_sha256": "f11fcb68947d110d48d07ac06baa5d8a1923253be3d2490d66b6df4558861021",
+      "fork_sha256": "15053b5ddd0964ca965c34a49fd8143d0281419d0ef90cecf51fc596718ac227"
+    },
+    {
+      "path": "scripts/install/release-advisories.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "cc3430356b06d2eac10facfc00f9a10a7b38e2e2ab9fd533bca23ca7c765caa8",
+      "fork_sha256": "79d05f2a4dbbff993a72c03e00b062755ddc3a06b6704befd730d9d20bd5013d"
+    },
+    {
+      "path": "scripts/install/smoke-install-archive.mjs",
+      "change": "modified",
+      "upstream_sha256": "6fc4f599e51330a44c2266b5ef3d107ad9a5751d3a1aaf79fa099aeb95982123",
+      "fork_sha256": "546d8a6ebf0391f7eab2370e2d47d5489a734a15b86b54a31638c6387c18d87b"
+    },
+    {
+      "path": "scripts/install/test-install-path.ps1",
+      "change": "modified",
+      "upstream_sha256": "7ff52d1b67f7d2190e08990bcfacc8920529798b28d52641196654a160e4c84e",
+      "fork_sha256": "c5d73d2d9a248d6c0e9141e1ecb9433ad0538e4d2c691df01fe241dee05f7be0"
+    },
+    {
+      "path": "scripts/install/test-install-progress.ps1",
+      "change": "modified",
+      "upstream_sha256": "a916a56e2e0946ff956f1fb808f2eb25b1de7288aa6878e97101b7ee69bb4e12",
+      "fork_sha256": "44f7b4df2fde64b9e18b3d8a2b1a0fd10812b4f71a0043b8b90094aeaf07405f"
+    },
+    {
+      "path": "scripts/install/test-install-version-guard.ps1",
+      "change": "modified",
+      "upstream_sha256": "813ee0075828e153c883bdf684d79dff92c236de9482f5f8f1d3b12e84d39053",
+      "fork_sha256": "5f599e0420639645e62e215051d888f82f9953cd51011d35086104693e9fbc8c"
+    },
+    {
+      "path": "scripts/install/verify-install-archives.mjs",
+      "change": "modified",
+      "upstream_sha256": "ddff774ac5699664c8e864758cf2afc63781cf664c51fb15c2ac2fe9e675a05b",
+      "fork_sha256": "df23fc0066d35ad7c2fb13fd3362164d53722c5eb46c2955e0e285ab8e53cb54"
+    },
+    {
+      "path": "scripts/npm/dry-run-npm-publish.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "53086bef1c6fb06c42f2704606423b2a99784a841d3f3ac620a1d07a487e3b20",
+      "fork_sha256": "d1dd381b56310630bbdf8e6fe481a2b7d0907b9086f6fda550ad0bf1f8b2eb9c"
+    },
+    {
+      "path": "scripts/npm/generate-npm-packages.mjs",
+      "change": "modified",
+      "upstream_sha256": "bc87660eb62597c5b0d83396fc391731d9fd4e622d073c58ec5ff8536b67ce0e",
+      "fork_sha256": "8fa6012735885719df645f31cded92168220fba1f3a33e2bd647ac39773bad56"
+    },
+    {
+      "path": "scripts/npm/npm-resolver.test.cjs",
+      "change": "modified",
+      "upstream_sha256": "894341a9401a8ffede419a6afddd0fef01716d2a51bd31d80a1b1c82ff7d49ea",
+      "fork_sha256": "675a08dbf734ab14047fcb20e7ae7a3b4e44768583074dd75bdac3d714a04503"
+    },
+    {
+      "path": "scripts/npm/publish-npm-platform-packages.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "e74fc6a041fd9320fbfc78ab037dcf33e780b503a06e435ef0b258446c23290e",
+      "fork_sha256": "279a7ee8834306e7d944dfc36c74707da87efa3aadcecf3c41cb7af774dc315a"
+    },
+    {
+      "path": "scripts/npm/smoke-npm-package-install.mjs",
+      "change": "modified",
+      "upstream_sha256": "bf9d2b0d254f5b6133098465ae36fcce30bc45625fd97a441d0de0d894a881d7",
+      "fork_sha256": "f80a590fc7a16a08cddeef2ffaa0a6904af8121c91a1b09447bf7e2ffdc875b7"
+    },
+    {
+      "path": "scripts/npm/smoke-npm-package-install.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "b2d87f1ecf6cfe3aaf2b71131f50c11943b346020a9b83fa9369b8efd001c85e",
+      "fork_sha256": "cc9733b6f159a38be05322afb35f4b9d32bc254d4b7bd7b18e442a14fe562dfe"
+    },
+    {
+      "path": "scripts/npm/verify-npm-packages.mjs",
+      "change": "modified",
+      "upstream_sha256": "f08e092cee90e722802c6515d8d4d30e078495ecf22106606d45a32764b85102",
+      "fork_sha256": "47c3b342fb5d8ffebcb5c83bc0737e0c4cbfb329f1989b15a9fdb12237bc5d8f"
+    },
+    {
+      "path": "scripts/release/generate-release-bundle.mjs",
+      "change": "modified",
+      "upstream_sha256": "ab78c1f2b0d439f7371124dc1dbc716f246b5f06671ac0c66104158f418702bd",
+      "fork_sha256": "d2269d2ae6f2c1e34b7aa74770d4ec31ec068f8ef9d868bf8ba2708748d13ecf"
+    },
+    {
+      "path": "scripts/release/verify-release-bundle.mjs",
+      "change": "modified",
+      "upstream_sha256": "391957271a89631a281438f16bfab62c1a378192c937382365cd52225dc023df",
+      "fork_sha256": "126a73a1c7cd88d1c8b152eb6588f8184ceb3cc526439ad7d14702c3533f4158"
+    },
+    {
+      "path": "scripts/runtime/stage-bun-runtime.mjs",
+      "change": "modified",
+      "upstream_sha256": "517fb9f327ae80f8fc4969c8254028e12a6c62e879792ee2202067721040ac2a",
+      "fork_sha256": "5ffb68f1153b9817a230ab3afbfe445a868af0515bd3297b03cc20817487054f"
+    },
+    {
+      "path": "scripts/runtime/verify-staged-bun-runtimes.test.mjs",
+      "change": "modified",
+      "upstream_sha256": "9807a0822940b26b0f1626eb0a58a319e8010b57b28f7c06f2b607096447c195",
+      "fork_sha256": "b14fc952a32319c5d96fa83fe2eae1b93247bee6a6d49a0158cc0e93a0ee510e"
+    },
+    {
+      "path": "scripts/shared/npm-package-config.mjs",
+      "change": "modified",
+      "upstream_sha256": "d7a1dbaaab810c10761b7c2c83fbbfaf40ee5a2133f8b759f767088f0ec69ee5",
+      "fork_sha256": "252fc2b81171b9e0258f670df4ef84ed00786496784141f39b7beff10af0cc02"
+    },
+    {
+      "path": "scripts/shared/third-party-notices.mjs",
+      "change": "modified",
+      "upstream_sha256": "ba1029537cccb26138b527f80ba5fdf68b9a563aeb9850279007f3884f46f3ae",
+      "fork_sha256": "957d1d27e34d093562dd933b94e3b050025c2f02db0ac5fbf058d9cf8d4448b2"
+    },
+    {
+      "path": "src/agent/bridge.rs",
+      "change": "modified",
+      "upstream_sha256": "aafbc0927369e7db5acddd98e8ff2e7c4791e31968cd0e8a9ed2587ebbc0e57d",
+      "fork_sha256": "1b55e92a41d2d920742f71bd5fdabac974e899601087f156a070bf559cd02510"
+    },
+    {
+      "path": "src/app/config/tests.rs",
+      "change": "modified",
+      "upstream_sha256": "a5e41dcd7b492cc855a86f772bc116032f2d70b8ca25d56b7d3aa0824b27800a",
+      "fork_sha256": "6cd20db4abfecd84313ea0522f634ea15900a24176c869185519e36be3ec7e5f"
+    },
+    {
+      "path": "src/app/connect/bridge_lifecycle.rs",
+      "change": "modified",
+      "upstream_sha256": "8e1df83bcf03cd96b58e8b658f1d663861b5e4885bd35139419e6f92d6526991",
+      "fork_sha256": "cc625c359507fefce5bea90eb6c4136b415747dfcb30743a20f15cb97d82329c"
+    },
+    {
+      "path": "src/app/connect/session_start.rs",
+      "change": "modified",
+      "upstream_sha256": "5044aa6c1d167daf5998e9c9c33d07bad682b7e3cb2e2f9b5c088651374377f4",
+      "fork_sha256": "a8a7852161709713c85021750a650b6c1066d1af100d88e97022c5ff7af08c62"
+    },
+    {
+      "path": "src/app/events/session.rs",
+      "change": "modified",
+      "upstream_sha256": "96402e7cdb0ea1c93c4915c1ba5132941673ec3503578fa86c61b56c2a8f539a",
+      "fork_sha256": "ea334a0379a7cdf70209a2f25852288cfe0d5b347cf9996beacab50cc9285c5a"
+    },
+    {
+      "path": "src/app/events/tests/client_events.rs",
+      "change": "modified",
+      "upstream_sha256": "f9e931957a437d6ae0b61078e2b1fa2dd6ffce4733a68178959e467188a64619",
+      "fork_sha256": "15a3ea3c74de96c6d0245326259261d3a4d2bf49dcc5eec6b0334acf51ecfa76"
+    },
+    {
+      "path": "src/app/input_submit.rs",
+      "change": "modified",
+      "upstream_sha256": "a1c9e5f8091e4241723556777e00d24de2517b886689d4c934092b0465571430",
+      "fork_sha256": "56311a9b449a2f40cc44398a5c010b2a52495dfaf7706292583f1864084ccf30"
+    },
+    {
+      "path": "src/app/settings.rs",
+      "change": "modified",
+      "upstream_sha256": "b5d7fc788e226cbf2549fdcc3b74edcdc24df956211bc0439b54d97681a9c7c1",
+      "fork_sha256": "eddf4b4bcb8cbd37ad38ce33a42c4d7dc8dcc81975ef499522b31d514aef09f6"
+    },
+    {
+      "path": "src/app/tab_title.rs",
+      "change": "modified",
+      "upstream_sha256": "efc52fb647d2f3aea833c25b1152b654d04315e7beda12dd5913a51a293c82d5",
+      "fork_sha256": "ee81811bb55a7df9c54180a1f51aaa40bc2734b8846d2b1be44634ef926ba0fe"
+    },
+    {
+      "path": "src/app/terminal_runtime/chat_session.rs",
+      "change": "modified",
+      "upstream_sha256": "c55e6e1516ee6dcda6151fb760b79cd2e1b267afda2592f47501fe2ba08a2d2e",
+      "fork_sha256": "461b26d1d81012b3a06c071073bd328f546833909cc0a00508990eb8abd918fd"
+    },
+    {
+      "path": "src/app/trust/store.rs",
+      "change": "modified",
+      "upstream_sha256": "24c0868fc820c00787f0bcfd6d23161bc3d53fb6652c469870c2a2e8728a1b91",
+      "fork_sha256": "901a6f39794f8bf0ff99586982bbb4cae3f19b7ee0dade6f091b3ada1b29f371"
+    },
+    {
+      "path": "src/app/update_check.rs",
+      "change": "modified",
+      "upstream_sha256": "f913b0e4a42e2a97683c20a97fe8a61cc15dc7fdcde00055b364beea244990b0",
+      "fork_sha256": "b260f1bd968ac32312624e1833b5c0fe21f827b8c4ee92bb1044fefd7d6e4844"
+    },
+    {
+      "path": "src/brand.rs",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "bb51d97ad9039ff7bec46f7a40f16425645cf9615207d0fca4ea74d89a635587"
+    },
+    {
+      "path": "src/cli/config.rs",
+      "change": "modified",
+      "upstream_sha256": "66c75b6ece068fe3b5d9736becd7a36ba4a6d69f90ae3f1a82c775217b94c4ab",
+      "fork_sha256": "939c7e560e09c8676e767448780d849da93984638ca6f81cc0925f84c61a650e"
+    },
+    {
+      "path": "src/cli/doctor.rs",
+      "change": "modified",
+      "upstream_sha256": "b7651c39cc0116d830cda5d4116a9a067b3fccc6aecb9587d8c15724316ac58f",
+      "fork_sha256": "3d08b8a16c96714bb3d000a0042642e73e3573f124c5d845bf04a5bf7a374dee"
+    },
+    {
+      "path": "src/cli/logs.rs",
+      "change": "modified",
+      "upstream_sha256": "57c0f0b1abe632f7a74152c6072c099d19338f6b766b92b2c0aab819bdec8d33",
+      "fork_sha256": "56074154ec59c2c4d71abb3c2ce2beae20f193a78c1edec01131bca0e1b3ad3d"
+    },
+    {
+      "path": "src/cli/reference.rs",
+      "change": "modified",
+      "upstream_sha256": "54bba3ee1251bf7f389c51968c5113a3c1a143b978b8d0e50549be436f04a294",
+      "fork_sha256": "db5c6d838735278889fae09838dd754f9830389771db49c7a2149430b1c2453a"
+    },
+    {
+      "path": "src/error.rs",
+      "change": "modified",
+      "upstream_sha256": "01e9deaa52cfc701d2f2e265148404b67dd14aff3063902034793301c4de16f2",
+      "fork_sha256": "dd22cd67920c6982e9cb356c7b9196182c247ab2bdf1b4114970c4864c20533e"
+    },
+    {
+      "path": "src/failure.rs",
+      "change": "modified",
+      "upstream_sha256": "955bacd817fb72e538909e4382682c41b29ee62a50be1ceaa0ceed6a70c73764",
+      "fork_sha256": "76cd32f2f71fa6ed400605e9fe2763d411159ad4245137c29c884dfc27c17220"
+    },
+    {
+      "path": "src/install_method.rs",
+      "change": "modified",
+      "upstream_sha256": "5018c4e2cd6baa75a14814dffc595cc3763fecc8c586ac41a4328b9e948660f8",
+      "fork_sha256": "69a593879e74efa09419299bd374ab8c435e302ae2a50fa4e7bf850c654cea23"
+    },
+    {
+      "path": "src/lib.rs",
+      "change": "modified",
+      "upstream_sha256": "c8e278e9568db065694ae5d4806b74871e0e637f04e99a60fdacc8573aebf123",
+      "fork_sha256": "e2df59b73b99b6e0cc2249e60296c5dd9a9c8f3cae61ccbcfe38e6b00b6d9399"
+    },
+    {
+      "path": "src/logging.rs",
+      "change": "modified",
+      "upstream_sha256": "b0d8cbb664d3bacf027811ccec287c25e8e4ad1abed7fa621a7e887a928e67f7",
+      "fork_sha256": "5c7a1e41fc9107579463eebd388330c3f3df00001549186d95d850119fa3ac26"
+    },
+    {
+      "path": "src/main.rs",
+      "change": "modified",
+      "upstream_sha256": "1c8853c64ec13710d00266f8307d808669c77aa5ecda0ae06a48c344c68213b0",
+      "fork_sha256": "777e0b8a485fe1cf31c333d2950d206a4b576cd0af3e0cb2fcbef67a0abdef51"
+    },
+    {
+      "path": "src/ui/autocomplete.rs",
+      "change": "modified",
+      "upstream_sha256": "7ca3239c4da2ea03e7590cfbfef6239cbb028f5eea16be90bcd4a6335310562f",
+      "fork_sha256": "476cc67c821bd9f9650c44847df91257858f06091d1931fd3a6489e132d508d0"
+    },
+    {
+      "path": "src/ui/config.rs",
+      "change": "modified",
+      "upstream_sha256": "f4e0ff438cccbd62d9bf39230b5c12c8a0572e6d6fa898bf7cf93a08ad33e2db",
+      "fork_sha256": "4d264dd2e04e10a09146a54c3d56fabb26436a18359f6cc4b786517c13cf32ac"
+    },
+    {
+      "path": "src/ui/config/help.rs",
+      "change": "modified",
+      "upstream_sha256": "1b17c273b0b067dcbabef806b04cfa4925a2828f09bc7a9f5ed9548f25ef7d35",
+      "fork_sha256": "81f35cbcef29440ea433ec8403131c9fadbd2d5d05cfd5c45e38e31093dc823e"
+    },
+    {
+      "path": "src/ui/config/input.rs",
+      "change": "modified",
+      "upstream_sha256": "1ca924e74334cd30855b87d4c5ed2ea669aab8b92db300288f367035f9141ecc",
+      "fork_sha256": "0ffb0d531cdf4df1af781600dca047f31bd21e3c497775d85a9a1d2466337c6b"
+    },
+    {
+      "path": "src/ui/config/mcp.rs",
+      "change": "modified",
+      "upstream_sha256": "84974a3405921f1d1653300d36a4b3d1f0f6f8665c8d27cb6e6d846d5929cd89",
+      "fork_sha256": "0014a701a32f6d0e46b444565f81f2b13ef5c66b45b2f55850ad6b53b4216a12"
+    },
+    {
+      "path": "src/ui/config/overlay.rs",
+      "change": "modified",
+      "upstream_sha256": "8012fe0a3d4f20bcbbebfaef81f7bfc0309ddad3458b3bb795eed7a05be433bb",
+      "fork_sha256": "89d8edeb4225a44e8001bc3bc69d3b858fa1db1b1ac13d52ed9cff39f2ed14e8"
+    },
+    {
+      "path": "src/ui/config/plugins.rs",
+      "change": "modified",
+      "upstream_sha256": "68959c012644981554809246697091bb85a788503770d244c7e9857e096fbe3f",
+      "fork_sha256": "35615d503519d8a3c534241c8118e33053bee838c1d1d8706072d022e7731ecc"
+    },
+    {
+      "path": "src/ui/config/settings.rs",
+      "change": "modified",
+      "upstream_sha256": "b3fb84a6e77ba06dc09d3abef2c2e6072d208867cfbcae5d827300b9bc5eb89c",
+      "fork_sha256": "4755c1e8559982d3f8e4ac2a4d4acfa680ba1dbf41ba95c690760b734a06330c"
+    },
+    {
+      "path": "src/ui/config/status.rs",
+      "change": "modified",
+      "upstream_sha256": "68c68f76afe3e8d9fdfb31c45efba49dda8a4fa08f43406add2fb48a8120f9bf",
+      "fork_sha256": "597f9f617b27de2b7f447c45dbd73258cfb0d87bd7bd40fd5297bd421a7e4acb"
+    },
+    {
+      "path": "src/ui/config/usage.rs",
+      "change": "modified",
+      "upstream_sha256": "da376024a0f13d6776e52b0deb3ee893f585020905fbda3a7d63e47827699aeb",
+      "fork_sha256": "c2337769123aec4fc084a8e105a8dab6ffac107c62b96b7bdf813a4095c24ef9"
+    },
+    {
+      "path": "src/ui/footer_rows.rs",
+      "change": "modified",
+      "upstream_sha256": "c5451e37e8b9a8e729d01f563551058a49293313aa95acb45cf6d711dcd54d09",
+      "fork_sha256": "b61a5eda51c06f4b65970151aa1ee3ea150a3a217f36bcbab5d3435c9c74bff1"
+    },
+    {
+      "path": "src/ui/inline_chat_rows.rs",
+      "change": "modified",
+      "upstream_sha256": "f49f4cc68d1d0bd966dacd4238cf4f45e82a9105b6f3c2b1a4d9a7283422b098",
+      "fork_sha256": "19eb787e612e8852cf8c4a01cf3b96d27deb806a991289910dac80cb49573705"
+    },
+    {
+      "path": "src/ui/message_rows.rs",
+      "change": "modified",
+      "upstream_sha256": "2c9e4be471bf2a1d99c17191b2c4958d35a6a0f4d9463630ae1c9eb64c75896c",
+      "fork_sha256": "6ef8ca48ace5042e4b9ee064138ddc37e890031df2907246d565bee7adb2e93e"
+    },
+    {
+      "path": "src/ui/session_picker.rs",
+      "change": "modified",
+      "upstream_sha256": "7491afc79227f1d1e8ad43efb844ec885125599fbb50e055b75538d21a36c093",
+      "fork_sha256": "25150c4e8bbb0e54d720d891aa2e552ee6f6aedddeb0797ff8459afcec305ca7"
+    },
+    {
+      "path": "src/ui/theme.rs",
+      "change": "modified",
+      "upstream_sha256": "398cb6d977e096155ae35df7b0413b98bcd13187379f007fc2bd7364cbeea687",
+      "fork_sha256": "f9b6a448c398182a8bf7b08822fb476eb9e199223e71f618deeaa1c8d2e5e92b"
+    },
+    {
+      "path": "src/ui/tool_call/interactions.rs",
+      "change": "modified",
+      "upstream_sha256": "d84fb78a515300a28d967e0403fb034ebe414078a9a68ec64f5ff7b148674938",
+      "fork_sha256": "a9dcf2172485c05cf67bc8395a1e7b307619b605fde9756a10941f4655d208b8"
+    },
+    {
+      "path": "src/ui/tool_call/mod.rs",
+      "change": "modified",
+      "upstream_sha256": "213a485c8e6e125e14d32d24b2fb802b77b101582de35ffd0bfc9bb8bbf0bd8a",
+      "fork_sha256": "3a71ac07db60d0bc67da3f45c0e5e6e20cd9af240d972559fcb9c156b934a1aa"
+    },
+    {
+      "path": "src/ui/tool_call/standard.rs",
+      "change": "modified",
+      "upstream_sha256": "5760439947f34e5ef446c03c1253067a8338fad9109c9ccc188dfc0eeed05583",
+      "fork_sha256": "e8b2b3222f9a9afa0b6ae94337f80a6d493596f80a49037e9e51417d939fb53f"
+    },
+    {
+      "path": "src/ui/tool_call/tasks.rs",
+      "change": "modified",
+      "upstream_sha256": "045686e7d92ecb53b20ddc3cdb253902edcf5d6c455d3a7d7aaaccaaff93482c",
+      "fork_sha256": "9ef1978984ca776bbaeabf55564072ae2feea3f694111993b8f86b781c5a9f6a"
+    },
+    {
+      "path": "src/ui/tool_call/tests.rs",
+      "change": "modified",
+      "upstream_sha256": "a872c725eeef5c66ad37a7b22bec712280753c5977d37189e5f55a0289fac811",
+      "fork_sha256": "fcc9ab21944c4d98339b568472706eaca1604afd5841f2eeaec135e24c6868d8"
+    },
+    {
+      "path": "src/ui/trusted.rs",
+      "change": "modified",
+      "upstream_sha256": "85a97294fe3c2f3370448a6d4db59cab594fa5af86a6a5c434e7c317590f9c90",
+      "fork_sha256": "78efd2c59f0002b9906c8f205548cd38c91cf2229f2d94ef9e552534c894542a"
+    },
+    {
+      "path": "src/ui/update.rs",
+      "change": "modified",
+      "upstream_sha256": "664b86b004004b2821a7f780cea5ebe0c5decb87653709030449ee061c95a57e",
+      "fork_sha256": "58279755ed954e7655b383d5e793a2411f7ac0a81488c03070fc62c69f303333"
+    },
+    {
+      "path": "src/ui/welcome.rs",
+      "change": "modified",
+      "upstream_sha256": "f9b832fc7d2712c18fd7bdebfb40e433e70e5f8e6d5dd3fd39bc661e21674e12",
+      "fork_sha256": "324fdb4bc9c85b6d947ae87e8c122d21803db149140d9dce92815dc6ade89b98"
+    },
+    {
+      "path": "tests/claude_config_dir.rs",
+      "change": "modified",
+      "upstream_sha256": "b71ae06ca6787d3715bec8a196c22571b96f49bba63d3631c0e6f63ec64d45f8",
+      "fork_sha256": "165e7bbc90132d767ff73d640baa8db3c2762b0c75d2ddbfbf71fbaacbd98bce"
+    },
+    {
+      "path": "tests/cli_startup.rs",
+      "change": "modified",
+      "upstream_sha256": "e980733fd5ffb7776d5ba43e96c14ec1f6a2dd58a11bc045db5a0a79c7ec9cb5",
+      "fork_sha256": "27759f941e790851244e2a6be8678d34ecef1b3601ad49d3e63a3e445a67742d"
+    },
+    {
+      "path": "tests/config_flow.rs",
+      "change": "modified",
+      "upstream_sha256": "a1f1e065e53a05634c37421b8e7e895f61903f494d7cd5d261743df092398b24",
+      "fork_sha256": "8e17951b2a8bcbb9ccccbd611ddf0b84707c9c17cb8fd2fd316725f94ee3553b"
+    },
+    {
+      "path": "tests/docs_cli_contract.rs",
+      "change": "modified",
+      "upstream_sha256": "3bca8e3ae0b614d7b4673716ba83f8c20738413f75425c5d41262257592bfeb8",
+      "fork_sha256": "130a5c60aee116d832eb597a37fecb1e8884f2912a21e29379ce216c51d4130a"
+    },
+    {
+      "path": "tests/fixtures/README.md",
+      "change": "modified",
+      "upstream_sha256": "dda39152c0c147862d5a199b29b5fef74fe16a0e2e8144f84f6db44d9781dbd6",
+      "fork_sha256": "52c7a5622ea211f271a2d70c5f612aeb5e0a0f06be02c84effcaec49d9da1ca9"
+    },
+    {
+      "path": "tests/integration/helpers.rs",
+      "change": "modified",
+      "upstream_sha256": "3a891c49faa163fb59570a39b0bf68db34cd552a2f0593231d4236722c381fb1",
+      "fork_sha256": "5e0ddc48494b592cf796e11b9a66ff7118200a7778be9c8015585aa5da723a99"
+    },
+    {
+      "path": "tests/integration/permissions.rs",
+      "change": "modified",
+      "upstream_sha256": "fca61ef16be5d13c019131bbe48e491fd5e5e3b195be7f2aebb807a35700acd1",
+      "fork_sha256": "30869382bb524646b9b32eba93d453eb2d0f3b7a8d51e38982afd537cc2762df"
+    },
+    {
+      "path": "tests/integration/state_transitions.rs",
+      "change": "modified",
+      "upstream_sha256": "ad8d88ce95ac593241c547ee35cb089fcaef018fba595b2b0b112949060afa09",
+      "fork_sha256": "38d21777ea2ff6b876b2a66da3cca52a73b77b11ad9a9948fb0e473e56c3ba9a"
+    },
+    {
+      "path": "tests/integration/tool_lifecycle.rs",
+      "change": "modified",
+      "upstream_sha256": "31b30fe9bb934c3a8329c5b244eb8a381293bb23246993e6a4e10e7367903b50",
+      "fork_sha256": "c68b8aa665fc66506833486157e4923f16d7e2f2e8eb16008c800cdea6192039"
+    },
+    {
+      "path": "tests/rebrand_contract.rs",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "ce25aa9e448e118b94c390fa082b3abee853146b44fb5513e5a63a0169ed4be9"
+    },
+    {
+      "path": "tests/slash_input_flow.rs",
+      "change": "modified",
+      "upstream_sha256": "79878e8f7ddd7a411b0c1b63e8e68353401e129cd7abb39f4d236b1a6d4b8f6e",
+      "fork_sha256": "f331644ff33e4448f9ab1c4946549c77f5a0595663e1872b7ce7ce704d6966dc"
+    },
+    {
+      "path": "tests/terminal_resize.rs",
+      "change": "modified",
+      "upstream_sha256": "9c7449da7d264f830dd001418183ec5d251cce07577570eb9d8c0ab5360e3e7d",
+      "fork_sha256": "2089d20a7f35d5b9a9b75e861753e55df12ce4c9ed423711e927d22dc72e2ce3"
+    },
+    {
+      "path": "tools/rebrand-augment.py",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "bf6952362f6bb104904c58db8500d3705f079ab8d0124cdd4eda26c3b43e13d5"
+    },
+    {
+      "path": "tools/rebrand-finish-installers.py",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "9609ffbf122bab404bacfab33aabb8ce44b2995bbed36602b48c47a53088fa98"
+    },
+    {
+      "path": "tools/rebrand-import.py",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "6a941aa2ab14ad0b2026823b8f45c14275dfa51de9c5f1ab58014b4fc26f49f0"
+    },
+    {
+      "path": "tools/rebrand-refine.py",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "c9da33f437b581c596d194aa8e7e7f6818fc8e0eef09625707921fad7fb99264"
+    },
+    {
+      "path": "tools/verify-brand.py",
+      "change": "added",
+      "upstream_sha256": null,
+      "fork_sha256": "dd16c5b1cd1d3f8ef77579abd027b6946b47881a87975e44b73ad816f6aaa88c"
+    }
+  ]
+}

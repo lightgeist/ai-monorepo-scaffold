@@ -1,0 +1,31 @@
+{
+  "schema": "atlascode-rs-provenance/v1",
+  "name": "atlascode-rs",
+  "version": "0.1.0",
+  "upstream": {
+    "repository": "https://github.com/srothgan/claude-code-rust",
+    "commit": "ddcf1eb5513b02ca2a68964220f115da0a69a80a",
+    "version": "0.14.9",
+    "license": "Apache-2.0",
+    "license_sha256": "1ddfd99f2ee4677d05544245a3112c839a56f8b733bcbdd2cfe9c4b2998da3c2"
+  },
+  "distribution": {
+    "repository": "https://github.com/lightgeist/ai-monorepo-scaffold",
+    "directory": "standalone/atlascode-rs",
+    "release_tag": "atlascode-rs-v0.1.0",
+    "npm_registry_published": false,
+    "signed_or_notarized": false
+  },
+  "engine": {
+    "sdk": "@anthropic-ai/claude-agent-sdk",
+    "sdk_version": "0.3.288",
+    "bun_version": "1.4.0",
+    "provider_changed": false
+  },
+  "policy": {
+    "in_app_updates": false,
+    "upstream_state_migrated": false,
+    "provider_state_shared": true
+  },
+  "date": "2026-10-04"
+}

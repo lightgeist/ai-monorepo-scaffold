@@ -1,0 +1,20 @@
+atlascode-rs 0.1.0
+Copyright 2026 atlascode-rs contributors (fork-specific modifications).
+
+Derived from claude-code-rust by Simon Peter Rothgang and upstream contributors.
+Copyright 2025 Simon Peter Rothgang. Original source-file copyright notices
+remain authoritative; they have not been removed or reassigned.
+Upstream: https://github.com/srothgan/claude-code-rust
+Upstream commit: ddcf1eb5513b02ca2a68964220f115da0a69a80a
+Upstream version: 0.14.9
+Source license: Apache License, Version 2.0 (see LICENSE).
+
+Modified in 2026: product/crate/CLI/package identities; own data and diagnostic
+namespaces; terminal mark/accent; distribution, installer and update policy;
+manuals, notices and rebrand verification. Provider identifiers and the official
+Claude Agent SDK are intentionally preserved. See PROVENANCE.json and the
+source rebrand ledger for the exact file-level changes.
+
+Claude and Anthropic identify third-party services. atlascode-rs is independent
+and does not claim their sponsorship, approval, or ownership of their SDK.
+Bun and bundled SDK components retain their own licenses and notices.

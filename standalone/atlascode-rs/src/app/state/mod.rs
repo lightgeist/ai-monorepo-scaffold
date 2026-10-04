@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Simon Peter Rothgang
+
+pub mod block_cache;
+mod btw;
+pub mod cache_metrics;
+pub mod chat_render;
+mod history_retention;
+pub mod messages;
+mod render_budget;
+pub mod tool_call_info;
+pub mod types;
+
+mod app;
+mod autocomplete;
+mod focus_runtime;
+mod git_runtime;
+mod paste;
+mod pending_messages;
+mod repaint;
+mod sdk_inventory;
+mod session_identity;
+mod session_runtime;
+mod startup;
+mod tool_tracking;
+mod transcript;
+mod turn;
+mod turn_notices;
+mod welcome;
+
+// Re-export all public types so external `use crate::app::state::X` paths still work.
+pub use app::App;
+pub use autocomplete::AutocompleteKind;
+pub use block_cache::BlockCache;
+pub(crate) use btw::{BtwRequestState, BtwRequests};
+pub use cache_metrics::CacheMetrics;
+pub use chat_render::{
+    ChatRenderState, ComposerRenderState, LiveRegionRenderState, TerminalSize, TerminalSizeChange,
+};
+pub use messages::{
+    BtwExchangeBlock, ChatMessage, ChatMessageId, HistoryOutputId, ImageAttachmentBlock,
+    MessageBlock, MessageBlockId, MessageRole, NoticeBlock, NoticeDedupKey, RateLimitIncidentKey,
+    SystemSeverity, TextBlock, TextBlockSpacing, UserDialogBlock, WelcomeBlock,
+    hash_text_block_content, hash_welcome_block_content,
+};
+pub use paste::PasteState;
+pub(crate) use pending_messages::{
+    PendingUserMessage, PendingUserMessageInsertError, PendingUserMessages,
+};
+pub use repaint::LayoutInvalidation as InvalidationLevel;
+pub use repaint::LayoutInvalidation;
+pub use sdk_inventory::SdkInventoryState;
+pub use session_runtime::SessionRuntimeState;
+pub use startup::StartupState;
+pub use tool_call_info::{
+    InlinePermission, InlineQuestion, SubagentPermissionContext, ToolCallInfo, is_execute_tool_name,
+};
+pub use transcript::Transcript;
+pub use turn::{ActiveCompaction, CompactionState, TurnState};
+pub use turn_notices::{NoticeStage, TurnNoticeLocation, TurnNoticeRef};
+pub(crate) use types::ComposerBlockReason;
+pub use types::{
+    AppStatus, ExtraUsage, HistoryRetentionPolicy, HistoryRetentionStats, LoginHint, McpState,
+    MessageUsage, ModeInfo, ModeState, PasteSessionState, PendingCommandAck, PostExitAction,
+    RecentSessionInfo, RenderCacheBudget, SelectionPoint, SessionPickerState, SessionUsageState,
+    SessionUsageSummary, ShutdownState, ToolCallScope, UpdatePromptAction, UpdatePromptState,
+    UsageActivitySummary, UsageActivityWindow, UsageBehaviorAttribution, UsageNamedAttribution,
+    UsageSnapshot, UsageSourceKind, UsageSourceMode, UsageState, UsageWindow,
+};
+
+mod prelude {
+    pub(super) use super::BtwRequests;
+    pub(super) use super::CacheMetrics;
+    pub(super) use super::app::App;
+    pub(super) use super::cache_metrics;
+    pub(super) use super::chat_render::ChatRenderState;
+    pub(super) use super::messages::{ChatMessage, MessageBlock, MessageRole, NoticeDedupKey};
+    pub(super) use super::paste::PasteState;
+    pub(super) use super::pending_messages::PendingUserMessages;
+    pub(super) use super::repaint::LayoutInvalidation as InvalidationLevel;
+    pub(super) use super::sdk_inventory::SdkInventoryState;
+    pub(super) use super::session_runtime::SessionRuntimeState;
+    pub(super) use super::startup::StartupState;
+    pub(super) use super::transcript::Transcript;
+    pub(super) use super::turn::TurnState;
+    pub(super) use super::turn_notices::TurnNoticeRef;
+    pub(super) use super::types::{
+        AppStatus, ComposerAccess, ComposerBlockReason, HistoryRetentionPolicy,
+        HistoryRetentionStats, McpState, PasteSessionState, PendingCommandAck, RecentSessionInfo,
+        RenderCacheBudget, SelectionPoint, SessionPickerState, ShutdownState, ToolCallScope,
+        UpdatePromptState, UsageState,
+    };
+    pub(super) use crate::agent::events::ClientEvent;
+    pub(super) use crate::agent::model;
+    pub(super) use crate::app::config::ConfigState;
+    pub(super) use crate::app::file_index;
+    pub(super) use crate::app::focus::{FocusContext, FocusManager, FocusOwner, FocusTarget};
+    pub(super) use crate::app::git_context::GitContextState;
+    pub(super) use crate::app::inline_interactions::{
+        clear_inline_interaction_focus, focus_next_inline_interaction,
+    };
+    pub(super) use crate::app::input::{
+        InputSnapshot, InputState, parse_paste_placeholder_before_cursor,
+    };
+    pub(super) use crate::app::keymap::ResolvedKeymap;
+    pub(super) use crate::app::mention;
+    pub(super) use crate::app::notify;
+    pub(super) use crate::app::paste_burst;
+    pub(super) use crate::app::plugins::PluginsState;
+    pub(super) use crate::app::slash;
+    pub(super) use crate::app::subagent;
+    pub(super) use crate::app::trust::TrustState;
+    pub(super) use crate::app::view::SurfaceMode;
+    pub(super) use crate::app::{
+        ChatPurgeReplayOptions, SurfaceDirtyState, TerminalLifecycleState,
+    };
+    pub(super) use std::collections::{BTreeSet, HashMap, HashSet};
+    pub(super) use std::path::{Path, PathBuf};
+    pub(super) use std::sync::mpsc as std_mpsc;
+    pub(super) use std::time::Instant;
+    pub(super) use tokio::sync::mpsc;
+}
+
+#[cfg(test)]
+mod tests;

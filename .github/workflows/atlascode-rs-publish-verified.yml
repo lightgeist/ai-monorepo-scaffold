@@ -1,0 +1,127 @@
+name: atlascode-rs verified preview publication
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-publish-verified.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: lightgeist/ai-monorepo-scaffold
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Independent auditor tests
+        working-directory: tools/atlascode-rs-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v test_verify_archives.py 2>&1 | tee ../../../auditor-tests.log
+      - name: Require completed evidence runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The seal checks actual step outcomes; it does not relabel the stale
+          # Windows wrapper exit status as a successful original workflow.
+          gh run watch 37194909957 --repo "$GH_REPO" --interval 20
+          gh run watch 37195342387 --repo "$GH_REPO" --exit-status --interval 20
+      - name: Verify archive bytes and assemble source-bound evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/atlascode-rs-release/seal.py --run 37194909957 --builder 8fb8cd7531e2959ac48fa205e784ce6bd5de3e1c --windows-run 37195342387 --windows-builder 2b6f815e1f46d55decfc562c2fd8abfaf59ce247 --root release-final 2>&1 | tee seal.log
+      - name: Import exact source without modifying main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e standalone/atlascode-rs
+          source_commit=$(cat release-final/evidence/source-commit.txt)
+          source_tree=$(cat release-final/evidence/source-tree.txt)
+          git fetch "$PWD/release-final/source" "$source_commit"
+          git read-tree --prefix=standalone/atlascode-rs/ -u "$source_commit"
+          mkdir -p release-evidence/atlascode-rs-0.1.0
+          cp release-final/assets/VERIFICATION.md release-final/assets/VERIFICATION.json release-final/asset-manifest.json release-evidence/atlascode-rs-0.1.0/
+          git add release-evidence/atlascode-rs-0.1.0
+          git -c user.name='atlascode-rs release' -c user.email='atlascode-rs-release@users.noreply.github.com' commit -m 'release(atlascode-rs): import qualified 0.1.0 source and native release evidence'
+          test "$(git rev-parse HEAD:standalone/atlascode-rs)" = "$source_tree"
+          git push origin HEAD:refs/heads/atlascode-rs/rebrand-20261004
+          git rev-parse HEAD > release-final/published-source-commit.txt
+      - name: Upload a draft and verify every release download before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=atlascode-rs-v0.1.0
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then echo 'Refusing to overwrite an existing release'; exit 1; fi
+          gh release create "$tag" release-final/assets/* --repo "$GH_REPO" --target "$(cat release-final/published-source-commit.txt)" --title 'atlascode-rs 0.1.0 — native preview' --notes-file release-final/assets/VERIFICATION.md --draft --prerelease --latest=false
+          mkdir release-roundtrip
+          gh release download "$tag" --repo "$GH_REPO" --dir release-roundtrip
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          manifest=json.loads(Path('release-final/asset-manifest.json').read_text())
+          root=Path('release-roundtrip')
+          assert {p.name for p in root.iterdir()}=={x['file'] for x in manifest['files']}
+          for item in manifest['files']:
+              path=root/item['file']
+              with path.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+              assert digest==item['sha256'] and path.stat().st_size==item['bytes'],item['file']
+          Path('release-final/roundtrip-verification.json').write_text(json.dumps({'passed':True,'assets_verified':len(manifest['files']),'method':'downloaded from the draft GitHub release and compared every byte hash and size'},indent=2)+'\n')
+          PY
+          gh release edit "$tag" --repo "$GH_REPO" --draft=false --prerelease --latest=false
+          gh release view "$tag" --repo "$GH_REPO" --json url,tagName,isDraft,isPrerelease,assets > release-final/release.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-release-record
+          path: |
+            auditor-tests.log
+            seal.log
+            release-final/asset-manifest.json
+            release-final/published-source-commit.txt
+            release-final/roundtrip-verification.json
+            release-final/release.json
+            release-final/assets/VERIFICATION.md
+            release-final/assets/VERIFICATION.json
+            release-final/assets/CHECKSUMS.sha256
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-darwin-arm64
+          path: release-final/assets/atlascode-rs-0.1.0-darwin-arm64.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-darwin-x64
+          path: release-final/assets/atlascode-rs-0.1.0-darwin-x64.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-linux-x64-gnu
+          path: release-final/assets/atlascode-rs-0.1.0-linux-x64-gnu.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-linux-arm64-gnu
+          path: release-final/assets/atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-win32-x64-msvc
+          path: release-final/assets/atlascode-rs-0.1.0-win32-x64-msvc.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-win32-arm64-msvc
+          path: release-final/assets/atlascode-rs-0.1.0-win32-arm64-msvc.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-evidence
+          path: release-final/assets/atlascode-rs-0.1.0-evidence.zip
+          compression-level: 0

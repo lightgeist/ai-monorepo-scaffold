@@ -1,0 +1,372 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Simon Peter Rothgang
+
+use crate::agent::model;
+use serde::{Deserialize, Serialize};
+use std::time::Instant;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeState {
+    pub current_mode_id: String,
+    pub current_mode_name: String,
+    pub available_modes: Vec<ModeInfo>,
+}
+
+/// Login hint displayed when authentication is required during connection.
+/// Rendered as a banner above the input field.
+pub struct LoginHint {
+    pub method_name: String,
+    pub method_description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingCommandAck {
+    CurrentMode,
+    CurrentModel,
+    FastMode,
+    Ultracode,
+    ConfigOption { option_id: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpdatePromptAction {
+    #[default]
+    Install,
+    InstallScript,
+    InstallNpm,
+    SkipNow,
+    SkipVersion,
+    ReleaseNotes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdatePromptState {
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_url: String,
+    pub install_method: crate::install_method::InstallMethod,
+    pub selected: UpdatePromptAction,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostExitAction {
+    InstallUpdate { latest_version: String, method: crate::install_method::InstallMethod },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentSessionInfo {
+    pub session_id: String,
+    pub summary: String,
+    pub last_modified_ms: u64,
+    pub file_size_bytes: u64,
+    pub cwd: Option<String>,
+    pub git_branch: Option<String>,
+    pub custom_title: Option<String>,
+    pub first_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SessionPickerState {
+    /// Index of the currently highlighted session in `app.recent_sessions`.
+    pub selected: usize,
+    /// Scroll offset for when the list exceeds the visible area.
+    pub scroll_offset: usize,
+    /// Session whose turns are being inspected for a resume-at fork.
+    pub turn_session_id: Option<String>,
+    /// Highlighted turn in `app.sdk_inventory.rewind_targets`.
+    pub turn_selected: usize,
+    /// Scroll offset for the turn list.
+    pub turn_scroll_offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+#[allow(clippy::struct_field_names)]
+pub struct MessageUsage {
+    pub input_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageSourceMode {
+    #[default]
+    Auto,
+    Oauth,
+    Cli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageSourceKind {
+    Sdk,
+    Oauth,
+    Cli,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionUsageSummary {
+    pub total_cost_usd: Option<f64>,
+    pub total_api_duration_ms: Option<f64>,
+    pub total_duration_ms: Option<f64>,
+    pub total_lines_added: Option<f64>,
+    pub total_lines_removed: Option<f64>,
+    pub model_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageActivityWindow {
+    pub request_count: u64,
+    pub session_count: u64,
+    pub behaviors: Vec<UsageBehaviorAttribution>,
+    pub agents: Vec<UsageNamedAttribution>,
+    pub skills: Vec<UsageNamedAttribution>,
+    pub plugins: Vec<UsageNamedAttribution>,
+    pub mcp_servers: Vec<UsageNamedAttribution>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageBehaviorAttribution {
+    pub key: String,
+    pub pct: f64,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageNamedAttribution {
+    pub name: String,
+    pub pct: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageActivitySummary {
+    pub day: Option<UsageActivityWindow>,
+    pub week: Option<UsageActivityWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageWindow {
+    pub label: String,
+    pub utilization: f64,
+    pub resets_at: Option<std::time::SystemTime>,
+    pub reset_description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtraUsage {
+    pub monthly_limit: Option<f64>,
+    pub used_credits: Option<f64>,
+    pub utilization: Option<f64>,
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageSnapshot {
+    pub source: UsageSourceKind,
+    pub fetched_at: std::time::SystemTime,
+    pub subscription_type: Option<String>,
+    pub five_hour: Option<UsageWindow>,
+    pub seven_day: Option<UsageWindow>,
+    pub seven_day_oauth_apps: Option<UsageWindow>,
+    pub seven_day_opus: Option<UsageWindow>,
+    pub seven_day_sonnet: Option<UsageWindow>,
+    pub model_scoped: Vec<UsageWindow>,
+    pub extra_usage: Option<ExtraUsage>,
+    pub session: Option<SessionUsageSummary>,
+    pub activity: Option<UsageActivitySummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct UsageState {
+    pub snapshot: Option<UsageSnapshot>,
+    pub in_flight: bool,
+    pub last_error: Option<String>,
+    pub active_source: UsageSourceMode,
+    pub last_attempted_source: Option<UsageSourceKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionUsageState {
+    pub last_compaction_trigger: Option<model::CompactionTrigger>,
+    pub last_compaction_pre_tokens: Option<u64>,
+    pub last_compaction_post_tokens: Option<u64>,
+    pub last_compaction_duration_ms: Option<u64>,
+    pub context_usage_percent: Option<u8>,
+    pub context_usage_in_flight: bool,
+    pub context_usage_refresh_pending: bool,
+    pub context_usage_last_requested_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct McpState {
+    pub servers: Vec<model::McpServerStatus>,
+    pub auth_capabilities: model::McpAuthCapabilities,
+    pub in_flight: bool,
+    pub last_error: Option<String>,
+    pub claude_path: Option<std::path::PathBuf>,
+    pub removed_config_servers:
+        std::collections::BTreeMap<RemovedMcpServerKey, RemovedMcpServerGuard>,
+    pub pending_dynamic_config_removal: Option<String>,
+    pub pending_elicitation: Option<crate::agent::types::ElicitationRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RemovedMcpServerKey {
+    pub scope: String,
+    pub server_name: String,
+}
+
+impl RemovedMcpServerKey {
+    #[must_use]
+    pub fn new(scope: String, server_name: String) -> Self {
+        Self { scope, server_name }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemovedMcpServerGuard {
+    pub expected_source: crate::agent::types::McpSnapshotSource,
+}
+
+pub const DEFAULT_RENDER_CACHE_BUDGET_BYTES: usize = 24 * 1024 * 1024;
+pub const DEFAULT_HISTORY_RETENTION_MAX_BYTES: usize = 64 * 1024 * 1024;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderCacheBudget {
+    pub max_bytes: usize,
+    pub last_total_bytes: usize,
+    pub last_evicted_bytes: usize,
+    pub total_evictions: usize,
+}
+
+impl Default for RenderCacheBudget {
+    fn default() -> Self {
+        Self {
+            max_bytes: DEFAULT_RENDER_CACHE_BUDGET_BYTES,
+            last_total_bytes: 0,
+            last_evicted_bytes: 0,
+            total_evictions: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryRetentionPolicy {
+    pub max_bytes: usize,
+}
+
+impl Default for HistoryRetentionPolicy {
+    fn default() -> Self {
+        Self { max_bytes: DEFAULT_HISTORY_RETENTION_MAX_BYTES }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HistoryRetentionStats {
+    pub total_before_bytes: usize,
+    pub total_after_bytes: usize,
+    pub dropped_messages: usize,
+    pub dropped_bytes: usize,
+    pub total_dropped_messages: usize,
+    pub total_dropped_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheBudgetEnforceStats {
+    pub total_before_bytes: usize,
+    pub total_after_bytes: usize,
+    pub evicted_bytes: usize,
+    pub evicted_blocks: usize,
+    /// Bytes in protected (non-evictable) blocks excluded from the budget comparison.
+    pub protected_bytes: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AppStatus {
+    /// Waiting for bridge adapter connection. Draft editing remains available,
+    /// but submission is disabled until a session is established.
+    Connecting,
+    /// A slash command is in flight (input disabled, spinner shown).
+    CommandPending,
+    Ready,
+    Thinking,
+    Running,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComposerBlockReason {
+    CommandPending,
+    Error,
+    Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComposerAccess {
+    Active,
+    DraftOnly,
+    Blocked(ComposerBlockReason),
+}
+
+impl ComposerAccess {
+    #[must_use]
+    pub const fn can_edit(self) -> bool {
+        matches!(self, Self::Active | Self::DraftOnly)
+    }
+
+    #[must_use]
+    pub const fn can_submit(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    #[must_use]
+    pub const fn blocked_reason(self) -> Option<ComposerBlockReason> {
+        match self {
+            Self::Blocked(reason) => Some(reason),
+            Self::Active | Self::DraftOnly => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShutdownState {
+    #[default]
+    Running,
+    Requested,
+    Forced,
+}
+
+impl ShutdownState {
+    #[must_use]
+    pub const fn is_requested(self) -> bool {
+        !matches!(self, Self::Running)
+    }
+
+    #[must_use]
+    pub const fn is_forced(self) -> bool {
+        matches!(self, Self::Forced)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCallScope {
+    MainAgent,
+    SubagentRoot,
+    SubagentChild { parent_tool_use_id: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionPoint {
+    pub row: usize,
+    pub col: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasteSessionState {
+    pub id: u64,
+    pub start: SelectionPoint,
+    pub placeholder_index: Option<usize>,
+}

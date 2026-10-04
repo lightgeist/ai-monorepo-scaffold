@@ -1,0 +1,761 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Simon Peter Rothgang
+
+pub(crate) mod auth;
+mod btw;
+mod cache_policy;
+pub(crate) mod claude_cli;
+pub(crate) mod clipboard_image;
+pub(crate) mod config;
+mod connect;
+mod dialog;
+mod events;
+pub(crate) mod file_index;
+mod focus;
+mod git_context;
+mod inline_interactions;
+pub(crate) mod input;
+pub(crate) mod input_atoms;
+mod input_submit;
+pub mod keymap;
+mod keys;
+mod lifecycle;
+pub(crate) mod mention;
+mod notify;
+pub(crate) mod paste_burst;
+mod permissions;
+pub(crate) mod plugins;
+mod questions;
+mod service_status_check;
+pub(crate) mod session_picker;
+mod session_runtime;
+pub(crate) mod settings;
+pub(crate) mod slash;
+mod state;
+pub(crate) mod subagent;
+mod tab_title;
+pub(crate) mod tasks;
+pub(crate) mod terminal_runtime;
+#[cfg(test)]
+pub(crate) mod test_support;
+mod trust;
+pub(crate) mod update_check;
+mod update_prompt;
+pub(crate) mod usage;
+mod user_dialog;
+mod view;
+
+pub(crate) const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
+
+// Re-export all public types so `crate::app::App`, `crate::app::BlockCache`, etc. still work.
+pub use cache_policy::{
+    CacheSplitPolicy, DEFAULT_CACHE_SPLIT_HARD_LIMIT_BYTES, DEFAULT_CACHE_SPLIT_SOFT_LIMIT_BYTES,
+    DEFAULT_TOOL_PREVIEW_LIMIT_BYTES, TextSplitDecision, TextSplitKind, default_cache_split_policy,
+    find_text_split, find_text_split_index,
+};
+pub(crate) use cache_policy::{markdown_table_tail_is_open, starts_with_markdown_table_row};
+pub use config::{ConfigHelpSection, ConfigState, ConfigTab};
+pub use connect::{create_app, start_connection};
+pub use events::{handle_client_event, handle_terminal_event};
+pub use focus::{FocusManager, FocusOwner, FocusTarget};
+pub use input::InputState;
+pub use lifecycle::{
+    ChatPurgeReplayOptions, ChatPurgeReplayReason, ChatRebuildKind, ChatSurfaceDirtyState,
+    FullscreenSurfaceDirtyState, RESIZE_PURGE_REPLAY_MAX_ROWS, ReleaseReason, SurfaceDirtyState,
+    TerminalLifecycleState,
+};
+pub use service_status_check::start_service_status_check;
+pub use settings::{AppSettings, UpdatePrompt};
+pub(crate) use state::ComposerBlockReason;
+pub use state::{
+    ActiveCompaction, App, AppStatus, AutocompleteKind, BlockCache, BtwExchangeBlock, CacheMetrics,
+    ChatMessage, ChatMessageId, ChatRenderState, CompactionState, ComposerRenderState, ExtraUsage,
+    HistoryOutputId, ImageAttachmentBlock, InlinePermission, InlineQuestion, InvalidationLevel,
+    LayoutInvalidation, LiveRegionRenderState, LoginHint, McpState, MessageBlock, MessageBlockId,
+    MessageRole, MessageUsage, ModeInfo, ModeState, NoticeBlock, NoticeDedupKey, NoticeStage,
+    PasteSessionState, PendingCommandAck, PostExitAction, RateLimitIncidentKey, RecentSessionInfo,
+    SelectionPoint, SessionPickerState, SessionUsageState, SessionUsageSummary, ShutdownState,
+    SubagentPermissionContext, SystemSeverity, TerminalSize, TerminalSizeChange, TextBlock,
+    TextBlockSpacing, ToolCallInfo, ToolCallScope, TurnNoticeLocation, TurnNoticeRef,
+    UpdatePromptAction, UpdatePromptState, UsageActivitySummary, UsageActivityWindow,
+    UsageBehaviorAttribution, UsageNamedAttribution, UsageSnapshot, UsageSourceKind,
+    UsageSourceMode, UsageState, UsageWindow, UserDialogBlock, WelcomeBlock,
+    hash_text_block_content, hash_welcome_block_content, is_execute_tool_name,
+};
+pub(crate) use state::{
+    BtwRequestState, BtwRequests, PendingUserMessage, PendingUserMessageInsertError,
+};
+pub use trust::TrustSelection;
+pub use update_check::start_update_check;
+pub(crate) use update_prompt::actions_for as update_prompt_actions;
+pub use view::{FullscreenView, SurfaceMode};
+
+pub fn record_update_install_failure(app: &mut App, message: String) {
+    settings::record_install_failure(&mut app.global_settings, message);
+    save_update_install_result(app);
+}
+
+pub fn clear_update_install_failure(app: &mut App) {
+    settings::clear_install_failure(&mut app.global_settings);
+    save_update_install_result(app);
+}
+
+fn save_update_install_result(app: &App) {
+    let Some(path) = app.global_settings_path.as_ref() else {
+        return;
+    };
+    if let Err(error) = settings::save_global_settings(path, &app.global_settings) {
+        eprintln!("Failed to update app settings after install: {error}");
+    }
+}
+
+use crate::agent::events::ClientEvent;
+use crate::agent::model;
+use anyhow::Context as _;
+use futures::FutureExt as _;
+use std::time::{Duration, Instant};
+use terminal_runtime::TerminalInput;
+
+const SPINNER_FRAME_INTERVAL_NORMAL: Duration = Duration::from_millis(30);
+const SPINNER_FRAME_INTERVAL_REDUCED: Duration = Duration::from_millis(120);
+const EVENT_LOOP_TICK_INTERVAL: Duration = Duration::from_millis(16);
+/// Maximum number of ready-event rounds handled between frames.
+///
+/// Each round gives both sources one opportunity, so neither terminal input nor
+/// bridge traffic can monopolize the UI loop.
+const READY_EVENT_DRAIN_ROUNDS: usize = 64;
+
+fn event_loop_interval() -> tokio::time::Interval {
+    let first_tick = tokio::time::Instant::now() + EVENT_LOOP_TICK_INTERVAL;
+    let mut interval = tokio::time::interval_at(first_tick, EVENT_LOOP_TICK_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval
+}
+
+// ---------------------------------------------------------------------------
+// TUI event loop
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
+pub async fn run_tui(app: &mut App) -> anyhow::Result<()> {
+    let mut terminal_runtime = terminal_runtime::TerminalRuntime::bootstrap(app)?;
+    let result = run_tui_loop(app, &mut terminal_runtime).await;
+
+    if result.is_err() {
+        prepare_app_shutdown(app);
+        restore_terminal_after_shutdown(app, &mut terminal_runtime);
+        connect::shutdown_connection(app).await;
+        return result;
+    }
+
+    restore_terminal_after_shutdown(app, &mut terminal_runtime);
+
+    result
+}
+
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
+async fn run_tui_loop(
+    app: &mut App,
+    terminal_runtime: &mut terminal_runtime::TerminalRuntime,
+) -> anyhow::Result<()> {
+    let mut os_shutdown = Box::pin(wait_for_shutdown_signal().fuse());
+
+    let mut events = Some(TerminalInput::new());
+    let mut event_loop_interval = event_loop_interval();
+    let mut service_status_check_started = false;
+
+    loop {
+        start_connection(app);
+
+        // Phase 1: wait for at least one event or the next frame tick
+        tokio::select! {
+            Some(Ok(event)) = next_terminal_event(&mut events) => {
+                let outcome = events::handle_terminal_event(app, event);
+                handle_runtime_command(app, terminal_runtime, outcome.runtime_command())?;
+            }
+            Some(event) = app.event_rx.recv() => {
+                handle_runtime_client_event(
+                    app,
+                    terminal_runtime,
+                    event,
+                    &mut service_status_check_started,
+                    &mut events,
+                );
+            }
+            shutdown = &mut os_shutdown => {
+                if let Err(err) = shutdown {
+                    tracing::warn!(
+                        target: crate::logging::targets::APP_LIFECYCLE,
+                        event_name = "os_shutdown_listener_failed",
+                        message = "OS shutdown signal listener failed",
+                        outcome = "failure",
+                        error_message = %err,
+                    );
+                }
+                app.request_shutdown();
+            }
+            _ = event_loop_interval.tick() => {}
+        }
+
+        // Phase 2: process a bounded, fair batch of already-ready events.
+        for _ in 0..READY_EVENT_DRAIN_ROUNDS {
+            let mut handled_ready_event = false;
+
+            if let Some(Some(terminal_event)) = next_terminal_event(&mut events).now_or_never() {
+                handled_ready_event = true;
+                if let Ok(event) = terminal_event {
+                    let outcome = events::handle_terminal_event(app, event);
+                    handle_runtime_command(app, terminal_runtime, outcome.runtime_command())?;
+                }
+            }
+
+            if app.shutdown_requested() {
+                break;
+            }
+
+            if let Ok(event) = app.event_rx.try_recv() {
+                handled_ready_event = true;
+                handle_runtime_client_event(
+                    app,
+                    terminal_runtime,
+                    event,
+                    &mut service_status_check_started,
+                    &mut events,
+                );
+            }
+
+            if !handled_ready_event {
+                break;
+            }
+        }
+
+        if !app.shutdown_requested() {
+            file_index::drain_events(app);
+            input_submit::maybe_submit_initial_prompt(app);
+        }
+
+        let now = Instant::now();
+        // Tick the burst detector: flush any held/buffered content that
+        // has timed out. EmitChar re-inserts a single held character;
+        // EmitPaste feeds the accumulated burst into the paste queue.
+        if !app.shutdown_requested()
+            && app.surface_mode == SurfaceMode::Chat
+            && let Some(action) = app.paste.burst.tick(now)
+        {
+            apply_paste_burst_flush(app, action);
+        }
+
+        // Merge and process `Event::Paste` chunks as one paste action.
+        if !app.shutdown_requested()
+            && app.surface_mode == SurfaceMode::Chat
+            && app.paste.has_pending_text()
+        {
+            finalize_pending_paste_event(app);
+        }
+
+        if !app.shutdown_requested() {
+            app.tick_git_context(now);
+            session_runtime::tick_context_usage_refresh(app, now);
+            if app.btw.expire_failed(now) {
+                app.request_active_surface_repaint();
+            }
+        }
+        // Deferred submit: if Enter was pressed and no paste payload arrived
+        // in this drain cycle, restore the exact pre-submit snapshot and
+        // submit that unchanged draft.
+        if !app.shutdown_requested()
+            && app.surface_mode == SurfaceMode::Chat
+            && app.pending_submit.is_some()
+        {
+            finalize_deferred_submit(app);
+        }
+
+        if matches!(app.terminal_lifecycle, TerminalLifecycleState::ReleasedToChild(_)) {
+            // The child owns input and output, including window titles. Size
+            // is reconciled after return without polling the child's stdin.
+            app.surface_dirty.clear_for_child_release();
+            continue;
+        }
+
+        if app.shutdown_requested() {
+            prepare_app_shutdown(app);
+        }
+
+        terminal_runtime.sync_surface(app)?;
+
+        // Phase 3: render once (only when something changed)
+        let is_animating = !app.shutdown_requested()
+            && (matches!(
+                app.status,
+                AppStatus::Connecting
+                    | AppStatus::CommandPending
+                    | AppStatus::Thinking
+                    | AppStatus::Running
+            ) || app.turn.compaction.is_active()
+                || app.btw.has_active());
+        if is_animating {
+            advance_spinner_frame(app, Instant::now());
+            tab_title::update_tab_title(&app.status, app.spinner_frame, &app.cwd);
+            app.request_active_surface_repaint();
+        } else {
+            app.spinner_last_advance_at = None;
+        }
+        // Update tab title on non-animating state transitions (Ready, Error).
+        if !is_animating && app.surface_dirty.active_surface_needs_draw(app.terminal_lifecycle) {
+            tab_title::update_tab_title(&app.status, app.spinner_frame, &app.cwd);
+        }
+        let (width, height) =
+            crossterm::terminal::size().context("failed to read terminal size before draw")?;
+        events::reconcile_terminal_size(app, width, height);
+        terminal_runtime.apply_surface_rebuilds(app)?;
+        if app.surface_dirty.active_surface_needs_draw(app.terminal_lifecycle) {
+            terminal_runtime.draw_active_surface(app)?;
+        }
+
+        if app.shutdown_requested() {
+            if let Some(events) = events.as_mut() {
+                shutdown_connection_with_interrupts(app, events).await;
+            } else {
+                connect::shutdown_connection(app).await;
+            }
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_runtime_command(
+    app: &mut App,
+    terminal_runtime: &mut terminal_runtime::TerminalRuntime,
+    command: Option<keys::RuntimeCommand>,
+) -> anyhow::Result<()> {
+    match command {
+        Some(keys::RuntimeCommand::SuspendProcess) => suspend_tui_process(app, terminal_runtime),
+        None => Ok(()),
+    }
+}
+
+async fn next_terminal_event(
+    events: &mut Option<TerminalInput>,
+) -> Option<std::io::Result<crossterm::event::Event>> {
+    match events.as_mut() {
+        Some(events) => events.next().await,
+        None => std::future::pending().await,
+    }
+}
+
+fn suspend_tui_process(
+    app: &mut App,
+    terminal_runtime: &mut terminal_runtime::TerminalRuntime,
+) -> anyhow::Result<()> {
+    tab_title::restore_tab_title(&app.cwd);
+    terminal_runtime.restore(app);
+
+    #[cfg(unix)]
+    let suspend_result = suspend_current_process();
+    #[cfg(not(unix))]
+    let suspend_result = {
+        suspend_current_process();
+        Ok(())
+    };
+    let resumed_runtime = terminal_runtime::TerminalRuntime::bootstrap_with_input_reader(app)
+        .context("failed to restore terminal after process resume")?;
+    *terminal_runtime = resumed_runtime;
+    tab_title::update_tab_title(&app.status, app.spinner_frame, &app.cwd);
+    app.request_active_surface_repaint();
+
+    suspend_result
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn suspend_current_process() -> anyhow::Result<()> {
+    // SAFETY: `raise` targets the current process with a constant signal and does
+    // not dereference pointers or rely on external memory validity.
+    let result = unsafe { libc::raise(libc::SIGTSTP) };
+    (result == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+        .context("failed to suspend TUI process")
+}
+
+#[cfg(not(unix))]
+fn suspend_current_process() {
+    tracing::warn!(
+        target: crate::logging::targets::APP_LIFECYCLE,
+        event_name = "runtime_suspend_ignored",
+        message = "process suspend is not supported on this platform",
+        outcome = "ignored",
+    );
+}
+
+fn handle_runtime_client_event(
+    app: &mut App,
+    terminal_runtime: &mut terminal_runtime::TerminalRuntime,
+    event: ClientEvent,
+    service_status_check_started: &mut bool,
+    terminal_events: &mut Option<TerminalInput>,
+) {
+    let start_service_status_check =
+        matches!(event, ClientEvent::Connected { .. }) && !*service_status_check_started;
+    let invalidates_cached_chat_seed = matches!(
+        event,
+        ClientEvent::TerminalReleasedToChild { .. } | ClientEvent::TerminalReturnedFromChild { .. }
+    );
+    match &event {
+        ClientEvent::TerminalReleasedToChild { .. } => {
+            // Drop joins the reader before the release acknowledgement.
+            drop(terminal_events.take());
+        }
+        ClientEvent::TerminalReturnedFromChild { .. } => {
+            *terminal_events = Some(TerminalInput::new());
+        }
+        _ => {}
+    }
+    events::handle_client_event(app, event);
+    if invalidates_cached_chat_seed {
+        terminal_runtime.invalidate_cached_chat_seed("external_terminal_owner");
+    }
+    if start_service_status_check {
+        *service_status_check_started = true;
+        service_status_check::start_service_status_check(app);
+    }
+}
+
+fn prepare_app_shutdown(app: &mut App) {
+    app.request_shutdown();
+    if matches!(app.surface_mode, SurfaceMode::Fullscreen(_)) {
+        view::set_chat_surface(app);
+    }
+    app.input.clear();
+    app.pending_images.clear();
+    app.btw.clear();
+    app.paste.clear_all_sessions();
+    app.pending_submit = None;
+    app.mention = None;
+    app.slash.clear();
+    app.subagent = None;
+    app.request_chat_visible_rebuild();
+
+    // Dismiss all pending inline permissions (reject via last option)
+    for tool_id in std::mem::take(&mut app.turn.pending_interaction_ids) {
+        if let Some((mi, bi)) = app.lookup_tool_call(&tool_id)
+            && let Some(MessageBlock::ToolCall(tc)) =
+                app.transcript.messages.get_mut(mi).and_then(|m| m.blocks.get_mut(bi))
+        {
+            let tc = tc.as_mut();
+            if let Some(pending) = tc.pending_permission.take()
+                && let Some(last_opt) = pending.options.last()
+            {
+                let _ = pending.response_tx.send(model::RequestPermissionResponse::new(
+                    model::RequestPermissionOutcome::Selected(
+                        model::SelectedPermissionOutcome::new(last_opt.option_id.clone()),
+                    ),
+                ));
+            }
+            if let Some(pending) = tc.pending_question.take() {
+                let _ = pending.response_tx.send(model::RequestQuestionResponse::new(
+                    model::RequestQuestionOutcome::Cancelled,
+                ));
+            }
+        }
+    }
+
+    // Cancel any active turn and give the adapter a moment to clean up
+    if matches!(app.status, AppStatus::Thinking | AppStatus::Running)
+        && let Some(ref conn) = app.session_runtime.conn
+        && let Some(sid) = app.session_runtime.session_id.clone()
+    {
+        let _ = conn.cancel(sid.to_string());
+    }
+}
+
+fn restore_terminal_after_shutdown(
+    app: &mut App,
+    terminal_runtime: &mut terminal_runtime::TerminalRuntime,
+) {
+    tab_title::restore_tab_title(&app.cwd);
+    terminal_runtime.restore(app);
+}
+
+async fn shutdown_connection_with_interrupts(app: &mut App, events: &mut TerminalInput) {
+    let Some(mut shutdown) = connect::begin_shutdown_connection(app) else {
+        return;
+    };
+    if app.shutdown_forced() {
+        shutdown.force().await;
+        return;
+    }
+
+    let mut terminal_events_open = true;
+    let mut os_shutdown_open = true;
+    let mut os_shutdown = Box::pin(wait_for_shutdown_signal());
+    loop {
+        tokio::select! {
+            () = shutdown.wait() => return,
+            event = events.next(), if terminal_events_open => {
+                match event {
+                    Some(Ok(event)) => {
+                        let _ = events::handle_terminal_event(app, event);
+                    }
+                    Some(Err(err)) => {
+                        tracing::warn!(
+                            target: crate::logging::targets::APP_LIFECYCLE,
+                            event_name = "shutdown_terminal_listener_failed",
+                            message = "terminal event listener failed during shutdown",
+                            outcome = "degraded",
+                            error_message = %err,
+                        );
+                        terminal_events_open = false;
+                    }
+                    None => terminal_events_open = false,
+                }
+            }
+            signal = &mut os_shutdown, if os_shutdown_open => {
+                match signal {
+                    Ok(()) => app.force_shutdown(),
+                    Err(err) => {
+                        tracing::warn!(
+                            target: crate::logging::targets::APP_LIFECYCLE,
+                            event_name = "shutdown_force_listener_failed",
+                            message = "OS shutdown listener failed during cleanup",
+                            outcome = "degraded",
+                            error_message = %err,
+                        );
+                        os_shutdown_open = false;
+                    }
+                }
+            }
+        }
+
+        if app.shutdown_forced() {
+            shutdown.force().await;
+            return;
+        }
+    }
+}
+
+fn advance_spinner_frame(app: &mut App, now: Instant) {
+    let interval = if app.config.prefers_reduced_motion_effective() {
+        SPINNER_FRAME_INTERVAL_REDUCED
+    } else {
+        SPINNER_FRAME_INTERVAL_NORMAL
+    };
+
+    match app.spinner_last_advance_at {
+        Some(last_advance) if now.duration_since(last_advance) < interval => {}
+        Some(_) | None => {
+            app.spinner_frame = app.spinner_frame.wrapping_add(1);
+            app.spinner_last_advance_at = Some(now);
+        }
+    }
+}
+
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            sigint = tokio::signal::ctrl_c() => {
+                sigint?;
+            }
+            _ = sigterm.recv() => {}
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
+}
+
+/// Apply buffered input and request its paint through the same owner for timer
+/// expiry and non-character key boundaries.
+fn apply_paste_burst_flush(app: &mut App, action: paste_burst::FlushAction) {
+    match action {
+        paste_burst::FlushAction::EmitChar(ch) => {
+            let _ = app.input.textarea_insert_char(ch);
+            slash::sync_with_cursor(app);
+        }
+        paste_burst::FlushAction::EmitPaste(text) => app.queue_paste_text(&text),
+    }
+    app.request_active_surface_repaint();
+}
+
+/// Finalize queued `Event::Paste` chunks for this drain cycle.
+fn finalize_pending_paste_event(app: &mut App) {
+    let input_version_before = app.input.version;
+    apply_pending_paste_event(app);
+    if app.input.version != input_version_before {
+        slash::sync_with_cursor(app);
+    }
+}
+
+fn apply_pending_paste_event(app: &mut App) {
+    let pasted = app.paste.take_pending_text();
+    if pasted.is_empty() {
+        return;
+    }
+    let pasted_chars = pasted.chars().count();
+
+    let session = app.paste.take_pending_session().unwrap_or_else(|| state::PasteSessionState {
+        id: app.paste.allocate_session_id(),
+        start: SelectionPoint { row: app.input.cursor_row(), col: app.input.cursor_col() },
+        placeholder_index: None,
+    });
+    let session_id = session.id;
+
+    if session.placeholder_index.is_none() {
+        let end = SelectionPoint { row: app.input.cursor_row(), col: app.input.cursor_col() };
+        strip_input_range(app, session.start, end);
+    }
+
+    let appended = session
+        .placeholder_index
+        .and_then(|session_idx| {
+            let current_line = app.input.lines().get(app.input.cursor_row())?;
+            let current_idx =
+                input::parse_paste_placeholder_before_cursor(current_line, app.input.cursor_col())?;
+            (current_idx == session_idx).then_some(())
+        })
+        .is_some()
+        && app.input.append_to_active_paste_block(&pasted);
+    if appended {
+        app.paste.set_active_session(session);
+        app.request_chat_repaint();
+        tracing::debug!(
+            target: crate::logging::targets::APP_PASTE,
+            event_name = "paste_placeholder_appended",
+            message = "paste content appended to an active placeholder",
+            outcome = "success",
+            session_id,
+            pasted_chars,
+        );
+        return;
+    }
+
+    let char_count = input::count_text_chars(&pasted);
+    if char_count > input::PASTE_PLACEHOLDER_CHAR_THRESHOLD {
+        app.input.insert_paste_block(&pasted);
+        let idx = app.input.lines().get(app.input.cursor_row()).and_then(|line| {
+            input::parse_paste_placeholder_before_cursor(line, app.input.cursor_col())
+        });
+        app.paste
+            .set_active_session(state::PasteSessionState { placeholder_index: idx, ..session });
+        tracing::debug!(
+            target: crate::logging::targets::APP_PASTE,
+            event_name = "paste_placeholder_inserted",
+            message = "paste content inserted as a placeholder block",
+            outcome = "success",
+            session_id,
+            pasted_chars,
+            char_count,
+            placeholder_index = ?idx,
+        );
+    } else {
+        app.input.insert_str(&pasted);
+        app.paste.clear_active_session();
+        tracing::debug!(
+            target: crate::logging::targets::APP_PASTE,
+            event_name = "paste_inline_inserted",
+            message = "paste content inserted inline",
+            outcome = "success",
+            session_id,
+            pasted_chars,
+            char_count,
+            lines = app.input.lines().len(),
+        );
+    }
+    app.request_chat_repaint();
+}
+
+fn cursor_gt(a: SelectionPoint, b: SelectionPoint) -> bool {
+    a.row > b.row || (a.row == b.row && a.col > b.col)
+}
+
+fn cursor_to_byte_offset(lines: &[String], cursor: SelectionPoint) -> Option<usize> {
+    let line = lines.get(cursor.row)?;
+    let mut offset = 0usize;
+    for prior in &lines[..cursor.row] {
+        offset = offset.saturating_add(prior.len().saturating_add(1));
+    }
+    Some(offset.saturating_add(char_to_byte_index(line, cursor.col)))
+}
+
+fn char_to_byte_index(text: &str, char_idx: usize) -> usize {
+    text.char_indices().nth(char_idx).map_or(text.len(), |(i, _)| i)
+}
+
+fn byte_offset_to_cursor(text: &str, byte_offset: usize) -> SelectionPoint {
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let mut seen = 0usize;
+    for ch in text.chars() {
+        let ch_len = ch.len_utf8();
+        if seen + ch_len > byte_offset {
+            break;
+        }
+        seen += ch_len;
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    SelectionPoint { row, col }
+}
+
+fn apply_merged_input_snapshot(app: &mut App, merged: &str, cursor_offset: usize) {
+    let mut lines: Vec<String> = merged.split('\n').map(ToOwned::to_owned).collect();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    let mut cursor = byte_offset_to_cursor(merged, cursor_offset.min(merged.len()));
+    if cursor.row >= lines.len() {
+        cursor.row = lines.len().saturating_sub(1);
+        cursor.col = lines[cursor.row].chars().count();
+    } else {
+        cursor.col = cursor.col.min(lines[cursor.row].chars().count());
+    }
+
+    app.input.replace_lines_and_cursor(lines, cursor.row, cursor.col);
+}
+
+fn strip_input_range(app: &mut App, start: SelectionPoint, end: SelectionPoint) {
+    if cursor_gt(start, end) || start == end {
+        return;
+    }
+    let Some(start_offset) = cursor_to_byte_offset(app.input.lines(), start) else {
+        return;
+    };
+    let Some(end_offset) = cursor_to_byte_offset(app.input.lines(), end) else {
+        return;
+    };
+    if start_offset >= end_offset {
+        return;
+    }
+    let raw = app.input.lines().join("\n");
+    if end_offset > raw.len() {
+        return;
+    }
+    let mut merged = String::with_capacity(raw.len().saturating_sub(end_offset - start_offset));
+    merged.push_str(&raw[..start_offset]);
+    merged.push_str(&raw[end_offset..]);
+    apply_merged_input_snapshot(app, &merged, start_offset);
+}
+
+/// Finalize a deferred Enter by restoring the exact pre-submit input snapshot
+/// and submitting that original draft text.
+fn finalize_deferred_submit(app: &mut App) {
+    let Some(snapshot) = app.pending_submit.take() else {
+        return;
+    };
+    app.input.restore_snapshot(snapshot);
+    input_submit::submit_input(app);
+}
+
+#[cfg(test)]
+mod tests;

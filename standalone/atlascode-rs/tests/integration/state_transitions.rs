@@ -1,0 +1,421 @@
+// Modified for atlascode-rs, 2026; see NOTICE and PROVENANCE.json.
+// SPDX-License-Identifier: Apache-2.0
+// State transition integration tests.
+// Validates multi-event sequences and App state consistency.
+
+use atlascode_rs::agent::events::ClientEvent;
+use atlascode_rs::agent::model;
+use atlascode_rs::app::{AppStatus, MessageBlock, MessageRole};
+use pretty_assertions::assert_eq;
+
+use crate::helpers::{send_client_event, session_update, test_app, turn_complete};
+
+// --- Full turn lifecycle ---
+
+#[tokio::test]
+async fn agent_thought_chunk_sets_thinking_without_writing_transcript() {
+    let mut app = test_app();
+    let original_message_count = app.transcript.messages.len();
+    let thought_text = "Planning...";
+    let thought =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(thought_text)));
+
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentThoughtChunk(thought)));
+
+    assert!(matches!(app.status, AppStatus::Thinking));
+    assert_eq!(app.transcript.messages.len(), original_message_count);
+    assert!(
+        !app.transcript.messages.iter().any(|message| {
+            message.blocks.iter().any(|block| match block {
+                MessageBlock::Text(text) => text.text.contains(thought_text),
+                _ => false,
+            })
+        }),
+        "thought chunks should not be persisted as transcript message text"
+    );
+}
+
+#[tokio::test]
+async fn full_turn_lifecycle_text_only() {
+    let mut app = test_app();
+    assert!(matches!(app.status, AppStatus::Ready));
+
+    // Agent starts thinking (thought chunk)
+    let thought =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Planning...")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentThoughtChunk(thought)));
+    assert!(matches!(app.status, AppStatus::Thinking));
+
+    // Agent streams text
+    let chunk = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(
+        "Here is my answer.",
+    )));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(chunk)));
+    assert!(matches!(app.status, AppStatus::Running));
+
+    // Turn completes
+    send_client_event(&mut app, turn_complete());
+    assert!(matches!(app.status, AppStatus::Ready));
+    assert_eq!(app.transcript.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn full_turn_lifecycle_with_tool_calls() {
+    let mut app = test_app();
+
+    // Text chunk
+    let chunk = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(
+        "Let me check.",
+    )));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(chunk)));
+
+    // Tool call
+    let tc = model::ToolCall::new("tc-flow", "Read src/lib.rs")
+        .kind(model::ToolKind::Read)
+        .status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    // Tool completes
+    let fields = model::ToolCallUpdateFields::new().status(model::ToolCallStatus::Completed);
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::ToolCallUpdate(model::ToolCallUpdate::new(
+            "tc-flow", fields,
+        ))),
+    );
+    assert!(matches!(app.status, AppStatus::Thinking));
+
+    // More text
+    let chunk2 = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(
+        " The file looks good.",
+    )));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(chunk2)));
+
+    // Turn completes
+    send_client_event(&mut app, turn_complete());
+    assert!(matches!(app.status, AppStatus::Ready));
+}
+
+// --- Legacy TodoWrite generic handling ---
+
+#[tokio::test]
+async fn todowrite_tool_call_does_not_update_task_state() {
+    let mut app = test_app();
+
+    let raw_input = serde_json::json!({
+        "todos": [
+            {"content": "Fix bug", "status": "in_progress", "activeForm": "Fixing bug"},
+            {"content": "Write tests", "status": "pending", "activeForm": "Writing tests"},
+        ]
+    });
+
+    let mut meta = serde_json::Map::new();
+    meta.insert("claudeCode".into(), serde_json::json!({"toolName": "TodoWrite"}));
+    let tc = model::ToolCall::new("todo-1", "TodoWrite")
+        .kind(model::ToolKind::Other)
+        .status(model::ToolCallStatus::InProgress)
+        .raw_input(raw_input)
+        .meta(meta);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    assert!(app.sdk_inventory.tasks.is_empty(), "TodoWrite must not hydrate SDK task state");
+    assert!(app.has_tool_call("todo-1"));
+}
+
+// --- Error recovery ---
+
+#[tokio::test]
+async fn error_then_new_turn_recovers() {
+    let mut app = test_app();
+
+    send_client_event(
+        &mut app,
+        ClientEvent::TurnError {
+            session_id: "test-session".to_owned(),
+            message: "timeout".into(),
+            queued_turn_count: None,
+            api_error_status: None,
+            terminal_reason: None,
+        },
+    );
+    assert!(matches!(app.status, AppStatus::Error));
+
+    // New text chunk (simulates user retry) starts fresh
+    let chunk = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(
+        "Retry answer",
+    )));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(chunk)));
+    assert!(matches!(app.status, AppStatus::Running));
+}
+
+// --- Message accumulation ---
+
+#[tokio::test]
+async fn chunks_across_turns_append_to_last_assistant_message() {
+    let mut app = test_app();
+
+    // First turn
+    let c1 = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Turn 1")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c1)));
+    send_client_event(&mut app, turn_complete());
+    assert_eq!(app.transcript.messages.len(), 1);
+
+    // Second turn: chunks append to the last assistant message (no user message between turns)
+    let c2 = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Turn 2")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c2)));
+
+    // Still one message - consecutive assistant chunks always merge
+    assert_eq!(app.transcript.messages.len(), 1);
+    if let MessageBlock::Text(block) =
+        &app.transcript.messages.last().expect("message").blocks.last().expect("block")
+    {
+        assert!(block.text.contains("Turn 1"), "first turn text present");
+        assert!(block.text.contains("Turn 2"), "second turn text appended");
+    }
+}
+
+#[tokio::test]
+async fn tool_call_content_update() {
+    let mut app = test_app();
+
+    let tc =
+        model::ToolCall::new("tc-content", "Read file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    // Update with content
+    let content = vec![model::ToolCallContent::from("file contents here")];
+    let fields = model::ToolCallUpdateFields::new()
+        .content(content)
+        .status(model::ToolCallStatus::Completed);
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::ToolCallUpdate(model::ToolCallUpdate::new(
+            "tc-content",
+            fields,
+        ))),
+    );
+
+    let (mi, bi) = app.lookup_tool_call("tc-content").expect("tc-content indexed");
+    if let MessageBlock::ToolCall(tc) = &app.transcript.messages[mi].blocks[bi] {
+        assert!(!tc.content.is_empty(), "content should be set");
+    } else {
+        panic!("expected ToolCall block");
+    }
+}
+
+// --- Stress: many tool calls in one turn ---
+
+#[tokio::test]
+async fn stress_many_tool_calls_in_one_turn() {
+    let mut app = test_app();
+    app.status = AppStatus::Running;
+
+    for i in 0..50 {
+        let tc = model::ToolCall::new(format!("stress-{i}"), format!("Op {i}"))
+            .status(model::ToolCallStatus::InProgress);
+        send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+    }
+
+    assert_eq!(app.tool_call_index_len(), 50);
+
+    // Complete all
+    for i in 0..50 {
+        let fields = model::ToolCallUpdateFields::new().status(model::ToolCallStatus::Completed);
+        send_client_event(
+            &mut app,
+            session_update(model::SessionUpdate::ToolCallUpdate(model::ToolCallUpdate::new(
+                format!("stress-{i}"),
+                fields,
+            ))),
+        );
+    }
+
+    assert!(matches!(app.status, AppStatus::Thinking));
+}
+
+// --- CurrentModeUpdate ---
+
+#[tokio::test]
+async fn mode_updates_switch_known_modes_fall_back_for_unknown_ids_and_noop_without_state() {
+    let mut app = test_app();
+
+    app.session_runtime.mode = Some(atlascode_rs::app::ModeState {
+        current_mode_id: "code".into(),
+        current_mode_name: "Code".into(),
+        available_modes: vec![
+            atlascode_rs::app::ModeInfo { id: "code".into(), name: "Code".into() },
+            atlascode_rs::app::ModeInfo { id: "plan".into(), name: "Plan".into() },
+        ],
+    });
+
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::CurrentModeUpdate(model::CurrentModeUpdate::new(
+            "plan",
+        ))),
+    );
+    let mode = app.session_runtime.mode.as_ref().expect("mode should still exist");
+    assert_eq!(mode.current_mode_id, "plan");
+    assert_eq!(mode.current_mode_name, "Plan");
+
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::CurrentModeUpdate(model::CurrentModeUpdate::new(
+            "unknown-mode",
+        ))),
+    );
+    let mode = app.session_runtime.mode.as_ref().expect("mode should still exist");
+    assert_eq!(mode.current_mode_id, "unknown-mode");
+    assert_eq!(mode.current_mode_name, "unknown-mode");
+
+    let mut no_mode_app = test_app();
+    send_client_event(
+        &mut no_mode_app,
+        session_update(model::SessionUpdate::CurrentModeUpdate(model::CurrentModeUpdate::new(
+            "plan-mode",
+        ))),
+    );
+    assert!(
+        no_mode_app.session_runtime.mode.is_none(),
+        "update without existing mode state is a no-op"
+    );
+}
+
+// --- Edge cases: interleaved events ---
+
+#[tokio::test]
+async fn text_between_tool_calls_creates_separate_blocks() {
+    let mut app = test_app();
+
+    let c1 =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Before tool")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c1)));
+
+    let tc =
+        model::ToolCall::new("tc-inter", "Read file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    let c2 =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("After tool")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c2)));
+
+    let tc2 =
+        model::ToolCall::new("tc-inter2", "Write file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc2)));
+
+    let c3 =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Final text")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c3)));
+
+    // Should be: Text, ToolCall, Text, ToolCall, Text = 5 blocks
+    assert_eq!(app.transcript.messages.len(), 1);
+    assert_eq!(app.transcript.messages[0].blocks.len(), 5);
+    assert!(matches!(app.transcript.messages[0].blocks[0], MessageBlock::Text(..)));
+    assert!(matches!(app.transcript.messages[0].blocks[1], MessageBlock::ToolCall(_)));
+    assert!(matches!(app.transcript.messages[0].blocks[2], MessageBlock::Text(..)));
+    assert!(matches!(app.transcript.messages[0].blocks[3], MessageBlock::ToolCall(_)));
+    assert!(matches!(app.transcript.messages[0].blocks[4], MessageBlock::Text(..)));
+}
+
+#[tokio::test]
+async fn rapid_turn_complete_then_new_streaming() {
+    let mut app = test_app();
+
+    // First turn
+    let c1 = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Turn 1")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c1)));
+    send_client_event(&mut app, turn_complete());
+    assert!(matches!(app.status, AppStatus::Ready));
+    assert_eq!(app.files_accessed, 0);
+
+    // Immediately start second turn
+    let c2 = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("Turn 2")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c2)));
+    assert!(matches!(app.status, AppStatus::Running));
+
+    let tc = model::ToolCall::new("tc-t2", "Read file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+    assert_eq!(app.files_accessed, 1);
+
+    send_client_event(&mut app, turn_complete());
+    assert!(matches!(app.status, AppStatus::Ready));
+    assert_eq!(app.files_accessed, 0, "reset again on second TurnComplete");
+}
+
+#[tokio::test]
+async fn available_commands_update_replaces_previous() {
+    let mut app = test_app();
+
+    let cmd1 = model::AvailableCommand::new("/help", "Help");
+    let cmd2 = model::AvailableCommand::new("/clear", "Clear");
+    let update1 = model::AvailableCommandsUpdate::new(vec![cmd1, cmd2]);
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::AvailableCommandsUpdate(update1)),
+    );
+    assert_eq!(app.sdk_inventory.available_commands.len(), 2);
+
+    // New update replaces, not appends
+    let cmd3 = model::AvailableCommand::new("/commit", "Commit");
+    let update2 = model::AvailableCommandsUpdate::new(vec![cmd3]);
+    send_client_event(
+        &mut app,
+        session_update(model::SessionUpdate::AvailableCommandsUpdate(update2)),
+    );
+    assert_eq!(app.sdk_inventory.available_commands.len(), 1, "replaced, not appended");
+}
+
+#[tokio::test]
+async fn error_during_tool_calls_leaves_tool_calls_intact() {
+    let mut app = test_app();
+
+    let c = model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("working")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(c)));
+
+    let tc = model::ToolCall::new("tc-err", "Read file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    send_client_event(
+        &mut app,
+        ClientEvent::TurnError {
+            session_id: "test-session".to_owned(),
+            message: "crashed".into(),
+            queued_turn_count: None,
+            api_error_status: None,
+            terminal_reason: None,
+        },
+    );
+
+    assert!(matches!(app.status, AppStatus::Error));
+    // Tool call should remain indexed and preserved in the original assistant message.
+    assert!(app.has_tool_call("tc-err"));
+    assert_eq!(app.transcript.messages.len(), 2, "assistant message + system error message");
+    assert!(matches!(app.transcript.messages[0].role, MessageRole::Assistant));
+    assert_eq!(app.transcript.messages[0].blocks.len(), 2, "text + tool call preserved");
+    let Some(MessageBlock::ToolCall(tc)) = app.transcript.messages[0].blocks.get(1) else {
+        panic!("expected preserved tool call block");
+    };
+    assert_eq!(tc.id, "tc-err");
+    assert_eq!(tc.status, model::ToolCallStatus::Failed, "in-progress tool should be failed");
+
+    assert!(matches!(app.transcript.messages[1].role, MessageRole::System(_)));
+    let Some(MessageBlock::Text(block)) = app.transcript.messages[1].blocks.first() else {
+        panic!("expected system error text block");
+    };
+    assert!(block.text.contains("Turn failed: crashed"));
+}
+
+#[tokio::test]
+async fn files_accessed_accumulates_across_tool_calls_in_one_turn() {
+    let mut app = test_app();
+
+    for i in 0..3 {
+        let tc = model::ToolCall::new(format!("tc-acc-{i}"), format!("Read {i}"))
+            .status(model::ToolCallStatus::InProgress);
+        send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+    }
+
+    assert_eq!(app.files_accessed, 3, "one per tool call");
+    send_client_event(&mut app, turn_complete());
+    assert_eq!(app.files_accessed, 0, "reset on turn complete");
+}

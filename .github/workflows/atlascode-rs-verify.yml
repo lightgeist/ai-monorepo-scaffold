@@ -1,0 +1,259 @@
+name: atlascode-rs release qualification
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['tools/atlascode-rs/**', 'tools/atlascode-rs-release/installer-fixes.py', '.github/workflows/atlascode-rs-verify.yml']
+permissions:
+  contents: read
+concurrency:
+  group: atlascode-rs-qualification-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Reproduce the pinned source derivative
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p prepared/evidence
+          git clone https://github.com/srothgan/claude-code-rust.git source
+          git -C source checkout -b atlascode-rs-candidate ddcf1eb5513b02ca2a68964220f115da0a69a80a
+          python3 tools/atlascode-rs/import.py source | tee prepared/evidence/import.log
+          python3 tools/atlascode-rs/augment.py source | tee prepared/evidence/augment.log
+          mkdir -p source/tools
+          cp tools/atlascode-rs/verify-brand.py source/tools/verify-brand.py
+          cp tools/atlascode-rs/import.py source/tools/rebrand-import.py
+          cp tools/atlascode-rs/augment.py source/tools/rebrand-augment.py
+          cp tools/atlascode-rs/refine.py source/tools/rebrand-refine.py
+          cp tools/atlascode-rs-release/installer-fixes.py source/tools/rebrand-installer-fixes.py
+          python3 tools/atlascode-rs/refine.py source | tee prepared/evidence/refine.log
+          python3 tools/atlascode-rs-release/installer-fixes.py source | tee prepared/evidence/installer-fixes.log
+          (cd source && cargo fmt --all && cargo fmt --all -- --check) 2>&1 | tee prepared/evidence/format.log
+          python3 tools/atlascode-rs/refine.py source --finalize | tee prepared/evidence/ledger.log
+          python3 source/tools/verify-brand.py | tee prepared/evidence/brand-audit.json
+          git -C source add -A
+          git -C source diff --cached --stat > prepared/evidence/rebrand-diff-stat.txt
+          git -C source diff --cached --binary > prepared/evidence/rebrand.patch
+          git -C source -c user.name='atlascode-rs build' -c user.email='atlascode-rs-build@users.noreply.github.com' commit -m 'atlascode-rs 0.1.0 qualified source candidate'
+          git -C source rev-parse HEAD > prepared/evidence/source-commit.txt
+          git -C source rev-parse HEAD^{tree} > prepared/evidence/source-tree.txt
+          git -C source archive --format=tar.gz --prefix=atlascode-rs/ HEAD > prepared/source.tar.gz
+          git -C source bundle create ../prepared/atlascode-rs-history.bundle --all
+          sha256sum prepared/source.tar.gz prepared/atlascode-rs-history.bundle > prepared/evidence/source-sha256.txt
+          printf '%s\n' '${{ github.sha }}' > prepared/evidence/builder-commit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-prepared
+          path: prepared/
+          retention-days: 30
+          if-no-files-found: error
+  quality:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: atlascode-rs-prepared, path: input}
+      - run: tar -xzf input/source.tar.gz
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.21.0'}
+      - name: Complete bridge suite and locked dependency checks
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../quality-evidence
+          npm ci 2>&1 | tee ../quality-evidence/root-install.log
+          npm ci --prefix agent-sdk 2>&1 | tee ../quality-evidence/bridge-install.log
+          npm --prefix agent-sdk test 2>&1 | tee ../quality-evidence/bridge-tests.log
+          npm --prefix agent-sdk run lint 2>&1 | tee ../quality-evidence/bridge-lint.log
+          npm --prefix agent-sdk run knip 2>&1 | tee ../quality-evidence/bridge-knip.log
+          npm --prefix agent-sdk run audit 2>&1 | tee ../quality-evidence/bridge-audit.log
+          node scripts/runtime/stage-bun-runtime.mjs --check | tee ../quality-evidence/bun-manifest.log
+          node scripts/shared/verify-third-party-notices.mjs | tee ../quality-evidence/notices.log
+      - name: Isolated resolver and installer regression tests
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/npm/npm-resolver.test.cjs scripts/npm/smoke-npm-package-install.test.mjs scripts/runtime/verify-staged-bun-runtimes.test.mjs scripts/npm/dry-run-npm-publish.test.mjs scripts/npm/publish-npm-platform-packages.test.mjs scripts/shared/deny-targets.test.mjs scripts/install/release-advisories.test.mjs scripts/install/install-version-guard.test.mjs 2>&1 | tee ../quality-evidence/node-core-tests.log
+          node --test scripts/install/install-path.test.mjs 2>&1 | tee ../quality-evidence/install-path-tests.log
+      - name: Mock package layout and installer flows
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/runtime/stage-bun-runtime.mjs --download 2>&1 | tee ../quality-evidence/bun-stage.log
+          node scripts/npm/generate-npm-packages.mjs --mock-native-binary 2>&1 | tee ../quality-evidence/mock-npm-generate.log
+          node scripts/npm/verify-npm-packages.mjs 2>&1 | tee ../quality-evidence/mock-npm-verify.log
+          node scripts/npm/smoke-npm-package-install.mjs 2>&1 | tee ../quality-evidence/mock-npm-smoke.log
+          node scripts/install/generate-install-archives.mjs --mock-binaries 2>&1 | tee ../quality-evidence/mock-archives.log
+          node scripts/install/verify-install-archives.mjs 2>&1 | tee ../quality-evidence/mock-archive-verify.log
+          node --test scripts/install/install-progress.test.mjs 2>&1 | tee ../quality-evidence/install-progress-tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: atlascode-rs-quality-evidence, path: quality-evidence/, retention-days: 30}
+  native:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-latest, platform: linux-x64-gnu, target: x86_64-unknown-linux-gnu, exe: atlascode-rs}
+          - {runner: ubuntu-24.04-arm, platform: linux-arm64-gnu, target: aarch64-unknown-linux-gnu, exe: atlascode-rs}
+          - {runner: macos-15-intel, platform: darwin-x64, target: x86_64-apple-darwin, exe: atlascode-rs}
+          - {runner: macos-15, platform: darwin-arm64, target: aarch64-apple-darwin, exe: atlascode-rs}
+          - {runner: windows-latest, platform: win32-x64-msvc, target: x86_64-pc-windows-msvc, exe: atlascode-rs.exe}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc, target: aarch64-pc-windows-msvc, exe: atlascode-rs.exe}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: atlascode-rs-prepared, path: input}
+      - shell: bash
+        run: tar -xzf input/source.tar.gz
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.21.0'}
+      - name: Native toolchain and complete bridge suite
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../output/evidence/${{ matrix.platform }}
+          { uname -a; rustc -Vv; cargo --version; node --version; npm --version; } > ../output/evidence/${{ matrix.platform }}/toolchain.txt
+          rustup target add ${{ matrix.target }}
+          npm ci --prefix agent-sdk 2>&1 | tee ../output/evidence/${{ matrix.platform }}/bridge-install.log
+          npm --prefix agent-sdk test 2>&1 | tee ../output/evidence/${{ matrix.platform }}/bridge-tests.log
+      - name: Strict Rust lint
+        if: matrix.platform == 'linux-x64-gnu'
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check 2>&1 | tee ../output/evidence/${{ matrix.platform }}/format.log
+          cargo clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee ../output/evidence/${{ matrix.platform }}/clippy.log
+      - name: Native Rust and real PTY regression suite
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ATLASCODE_RS_CAPTURE_DIR="$(pwd)/../output/evidence/${{ matrix.platform }}/terminal-captures"
+          cargo test --locked --all-targets -- --test-threads=1 2>&1 | tee ../output/evidence/${{ matrix.platform }}/rust-tests.log
+      - name: Build and stage native release
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target ${{ matrix.target }} --bin atlascode-rs 2>&1 | tee ../output/evidence/${{ matrix.platform }}/release-build.log
+          mkdir -p ../output/dist-platform/${{ matrix.platform }}/bin ../output/dist-assets
+          binary=target/${{ matrix.target }}/release/${{ matrix.exe }}
+          "$binary" --version | tee ../output/evidence/${{ matrix.platform }}/version.txt
+          grep -Fx 'atlascode-rs 0.1.0' ../output/evidence/${{ matrix.platform }}/version.txt
+          cp "$binary" ../output/dist-platform/${{ matrix.platform }}/bin/${{ matrix.exe }}
+          cp "$binary" ../output/dist-assets/atlascode-rs-${{ matrix.target }}${{ endsWith(matrix.exe, '.exe') && '.exe' || '' }}
+          node scripts/runtime/stage-bun-runtime.mjs --download --platform ${{ matrix.platform }} --dist-platform ../output/dist-platform 2>&1 | tee ../output/evidence/${{ matrix.platform }}/bun-stage.log
+          { echo builder_commit=${{ github.sha }}; echo target=${{ matrix.target }}; echo platform=${{ matrix.platform }}; echo version=0.1.0; cat ../input/evidence/source-tree.txt; rustc -Vv; } > ../output/evidence/${{ matrix.platform }}/build-metadata.txt
+      - name: Windows installer function tests in independent processes
+        if: runner.os == 'Windows'
+        working-directory: atlascode-rs
+        shell: pwsh
+        run: |
+          & pwsh -NoLogo -NoProfile -File ./scripts/install/test-install-path.ps1 2>&1 | Tee-Object ../output/evidence/${{ matrix.platform }}/installer-path.log
+          if ($LASTEXITCODE -ne 0) { throw 'PATH guard tests failed' }
+          & pwsh -NoLogo -NoProfile -File ./scripts/install/test-install-version-guard.ps1 2>&1 | Tee-Object ../output/evidence/${{ matrix.platform }}/installer-version.log
+          if ($LASTEXITCODE -ne 0) { throw 'Version guard tests failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-native-${{ matrix.platform }}
+          path: output/
+          retention-days: 30
+          if-no-files-found: error
+  package:
+    needs: [native, quality]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: atlascode-rs-prepared, path: input}
+      - run: tar -xzf input/source.tar.gz
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 'atlascode-rs-native-*', path: atlascode-rs/, merge-multiple: true}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.21.0'}
+      - name: Build real distributable packages
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../package-evidence
+          find dist-platform -type f ! -name '*.exe' -exec chmod +x {} +
+          npm ci 2>&1 | tee ../package-evidence/root-install.log
+          npm ci --prefix agent-sdk 2>&1 | tee ../package-evidence/bridge-install.log
+          npm --prefix agent-sdk run build 2>&1 | tee ../package-evidence/bridge-build.log
+          node scripts/runtime/verify-staged-bun-runtimes.mjs --dist-platform dist-platform | tee ../package-evidence/staged-runtime-verify.log
+          node scripts/npm/generate-npm-packages.mjs 2>&1 | tee ../package-evidence/npm-generate.log
+          node scripts/npm/verify-npm-packages.mjs 2>&1 | tee ../package-evidence/npm-verify.log
+          node scripts/npm/smoke-npm-package-install.mjs --real-binary --no-system-runtime 2>&1 | tee ../package-evidence/npm-smoke.log
+          node scripts/install/generate-install-archives.mjs 2>&1 | tee ../package-evidence/archives-generate.log
+          node scripts/install/verify-install-archives.mjs 2>&1 | tee ../package-evidence/archives-verify.log
+          mkdir -p dist-pack
+          for directory in root darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do npm pack "./dist-npm/$directory" --pack-destination dist-pack; done 2>&1 | tee ../package-evidence/npm-pack.log
+          sha256sum dist-install/*.tar.gz dist-install/*.zip dist-pack/*.tgz > ../package-evidence/SHA256SUMS
+          cp -r dist-install/manifests ../package-evidence/install-manifests
+          cp -r dist-npm/manifests ../package-evidence/npm-manifests
+          if find dist-npm -type f \( -iname '*.woff' -o -iname '*.woff2' -o -iname '*.ttf' -o -iname '*.otf' \) | grep .; then exit 1; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-linux-x64-gnu, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-x64-gnu.tar.gz, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-linux-arm64-gnu, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-darwin-x64, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-x64.tar.gz, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-darwin-arm64, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-arm64.tar.gz, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-win32-x64-msvc, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-x64-msvc.zip, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-install-win32-arm64-msvc, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-arm64-msvc.zip, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: atlascode-rs-package-evidence, path: package-evidence/, retention-days: 30}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: atlascode-rs-npm-tarballs, path: atlascode-rs/dist-pack/, retention-days: 30}
+  smoke:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-latest, platform: linux-x64-gnu}
+          - {runner: ubuntu-24.04-arm, platform: linux-arm64-gnu}
+          - {runner: macos-15-intel, platform: darwin-x64}
+          - {runner: macos-15, platform: darwin-arm64}
+          - {runner: windows-latest, platform: win32-x64-msvc}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: atlascode-rs-prepared, path: input}
+      - shell: bash
+        run: tar -xzf input/source.tar.gz
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: 'atlascode-rs-install-${{ matrix.platform }}', path: atlascode-rs/dist-install}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.21.0'}
+      - name: Execute real portable app without system Node or Bun
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../smoke-evidence/${{ matrix.platform }}
+          node scripts/install/smoke-install-archive.mjs --platform ${{ matrix.platform }} --real-binary --no-system-runtime 2>&1 | tee ../smoke-evidence/${{ matrix.platform }}/archive-smoke.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: 'atlascode-rs-smoke-${{ matrix.platform }}', path: smoke-evidence/, retention-days: 30}

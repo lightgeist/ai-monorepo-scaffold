@@ -1,0 +1,15 @@
+# Summary
+
+- [About](about.md)
+- [Installation](installation.md)
+- [Usage](usage.md)
+  - [Slash Commands](commands.md)
+  - [Keyboard Shortcuts](shortcuts.md)
+  - [Settings](settings.md)
+  - [Diagnostics](diagnostics.md)
+  - [Troubleshooting](troubleshooting.md)
+  - [Help](help.md)
+- [Development](development.md)
+- [Architecture](architecture.md)
+- [Governance](governance.md)
+- [Changelog](changelog.md)

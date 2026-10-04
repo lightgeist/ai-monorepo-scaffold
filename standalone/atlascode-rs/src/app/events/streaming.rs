@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Simon Peter Rothgang
+
+use super::super::{
+    App, AppStatus, ChatMessage, MessageBlock, MessageRole, TextBlock, TextBlockSpacing,
+    TextSplitDecision, TextSplitKind, default_cache_split_policy, find_text_split,
+};
+use crate::agent::model;
+
+pub(super) fn handle_agent_message_chunk(app: &mut App, chunk: model::ContentChunk) {
+    let model::ContentBlock::Text(text) = chunk.content else {
+        return;
+    };
+
+    app.status = AppStatus::Running;
+    if text.text.is_empty() {
+        return;
+    }
+    if let Some(owner_idx) = app.active_turn_assistant_idx()
+        && let Some(owner) = app.transcript.messages.get_mut(owner_idx)
+    {
+        append_agent_stream_text(
+            &mut owner.blocks,
+            &text.text,
+            chunk.source_message_uuid.as_deref(),
+        );
+        app.sync_after_message_blocks_changed(owner_idx);
+        return;
+    }
+
+    if let Some(last) = app.transcript.messages.last_mut()
+        && matches!(last.role, MessageRole::Assistant)
+    {
+        append_agent_stream_text(
+            &mut last.blocks,
+            &text.text,
+            chunk.source_message_uuid.as_deref(),
+        );
+        let last_idx = app.transcript.messages.len().saturating_sub(1);
+        app.bind_active_turn_assistant(last_idx);
+        app.sync_after_message_blocks_changed(last_idx);
+        return;
+    }
+
+    let mut blocks = Vec::new();
+    append_agent_stream_text(&mut blocks, &text.text, chunk.source_message_uuid.as_deref());
+    app.push_message_tracked(ChatMessage::new(MessageRole::Assistant, blocks, None));
+    app.bind_active_turn_assistant_to_tail();
+}
+
+pub(super) fn append_agent_stream_text(
+    blocks: &mut Vec<MessageBlock>,
+    chunk: &str,
+    source_message_uuid: Option<&str>,
+) {
+    if chunk.is_empty() {
+        return;
+    }
+    if let Some(MessageBlock::Text(block)) = blocks.last_mut() {
+        block.text.push_str(chunk);
+        block.add_source_message_uuid(source_message_uuid);
+        block.cache.invalidate();
+    } else {
+        blocks.push(new_text_block(chunk.to_owned(), source_message_uuid));
+    }
+
+    split_tail_text_block(blocks);
+}
+
+fn new_text_block(text: String, source_message_uuid: Option<&str>) -> MessageBlock {
+    MessageBlock::Text(TextBlock::new(text).with_source_message_uuid(source_message_uuid))
+}
+
+fn split_tail_text_block(blocks: &mut Vec<MessageBlock>) {
+    loop {
+        let Some(tail_idx) = blocks.len().checked_sub(1) else {
+            break;
+        };
+        let Some(split) = blocks.get(tail_idx).and_then(|block| {
+            if let MessageBlock::Text(block) = block {
+                find_text_block_split(block.text.as_str())
+            } else {
+                None
+            }
+        }) else {
+            break;
+        };
+
+        let (tail_id, source_message_uuids, completed, remainder) = match blocks.get(tail_idx) {
+            Some(MessageBlock::Text(block)) => (
+                block.id,
+                block.source_message_uuids.clone(),
+                block.text[..split.split_at].to_owned(),
+                block.text[split.split_at..].to_owned(),
+            ),
+            _ => break,
+        };
+
+        if completed.is_empty() || remainder.is_empty() {
+            break;
+        }
+
+        blocks[tail_idx] = MessageBlock::Text(
+            TextBlock::new_with_id(tail_id, remainder)
+                .with_source_message_uuids(source_message_uuids.clone()),
+        );
+        blocks.insert(tail_idx, completed_text_block(completed, split, source_message_uuids));
+    }
+}
+
+fn completed_text_block(
+    text: String,
+    split: TextSplitDecision,
+    source_message_uuids: Vec<String>,
+) -> MessageBlock {
+    let trailing_spacing = match split.kind {
+        TextSplitKind::Generic => TextBlockSpacing::None,
+        TextSplitKind::ParagraphBoundary => TextBlockSpacing::ParagraphBreak,
+    };
+    MessageBlock::Text(
+        TextBlock::new(text)
+            .with_source_message_uuids(source_message_uuids)
+            .with_trailing_spacing(trailing_spacing),
+    )
+}
+
+pub(super) fn find_text_block_split(text: &str) -> Option<TextSplitDecision> {
+    find_text_split(text, *default_cache_split_policy())
+}
+
+#[cfg(test)]
+pub(super) fn find_text_block_split_index(text: &str) -> Option<usize> {
+    find_text_block_split(text).map(|decision| decision.split_at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_agent_message_chunk;
+    use crate::agent::model;
+    use crate::app::{App, ChatMessage, MessageBlock, MessageRole, TextBlockSpacing};
+
+    #[test]
+    fn streaming_text_chunk_appends_to_canonical_active_assistant_message() {
+        let mut app = App::test_default();
+        app.status = crate::app::AppStatus::Thinking;
+        app.transcript.messages.push(ChatMessage::new(MessageRole::Assistant, Vec::new(), None));
+        app.bind_active_turn_assistant(0);
+
+        handle_agent_message_chunk(
+            &mut app,
+            model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(
+                "first\n\nsecond",
+            ))),
+        );
+
+        assert_eq!(app.active_turn_assistant_idx(), Some(0));
+        assert_eq!(app.transcript.messages[0].blocks.len(), 2);
+        let Some(MessageBlock::Text(first)) = app.transcript.messages[0].blocks.first() else {
+            panic!("expected first text block");
+        };
+        let Some(MessageBlock::Text(second)) = app.transcript.messages[0].blocks.get(1) else {
+            panic!("expected second text block");
+        };
+        assert_eq!(first.text, "first\n\n");
+        assert_eq!(first.trailing_spacing, TextBlockSpacing::ParagraphBreak);
+        assert_eq!(second.text, "second");
+        assert_eq!(second.trailing_spacing, TextBlockSpacing::None);
+    }
+
+    #[test]
+    fn streaming_text_keeps_contiguous_chunks_in_one_block_when_source_uuid_changes() {
+        let mut app = App::test_default();
+        app.status = crate::app::AppStatus::Thinking;
+        app.transcript.messages.push(ChatMessage::new(MessageRole::Assistant, Vec::new(), None));
+        app.bind_active_turn_assistant(0);
+
+        for (text, source_message_uuid) in
+            [("H", "assistant-part-1"), ("ello!", "assistant-part-2")]
+        {
+            handle_agent_message_chunk(
+                &mut app,
+                model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(text)))
+                    .source_message_uuid(Some(source_message_uuid.to_owned())),
+            );
+        }
+
+        assert_eq!(app.transcript.messages[0].blocks.len(), 1);
+        let Some(MessageBlock::Text(block)) = app.transcript.messages[0].blocks.first() else {
+            panic!("expected text block");
+        };
+        assert_eq!(block.text, "Hello!");
+        assert!(block.has_source_message_uuid("assistant-part-1"));
+        assert!(block.has_source_message_uuid("assistant-part-2"));
+    }
+
+    #[test]
+    fn sdk_context_markdown_uses_the_active_assistant_rendering_path() {
+        let mut app = App::test_default();
+        app.status = crate::app::AppStatus::Thinking;
+        app.transcript.messages.push(ChatMessage::new(MessageRole::Assistant, Vec::new(), None));
+        app.bind_active_turn_assistant(0);
+        let markdown =
+            "## Context usage\n\n| Category | Tokens |\n| --- | ---: |\n| System | 100 |";
+
+        handle_agent_message_chunk(
+            &mut app,
+            model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new(markdown)))
+                .source_message_uuid(Some("context-assistant-1".to_owned())),
+        );
+
+        let text_blocks = app.transcript.messages[0]
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                MessageBlock::Text(block) => Some(block),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            text_blocks.iter().map(|block| block.text.as_str()).collect::<String>(),
+            markdown
+        );
+        assert!(
+            text_blocks.iter().all(|block| block.has_source_message_uuid("context-assistant-1"))
+        );
+
+        let rendered = crate::ui::inline_chat_rows::serialize_live_rows_with_boundaries_excluding(
+            &mut app,
+            100,
+            &std::collections::BTreeSet::new(),
+        );
+        let text = rendered
+            .rows()
+            .iter()
+            .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for expected in ["Context usage", "Category", "Tokens", "System", "100"] {
+            assert!(text.contains(expected), "missing rendered context fragment: {expected}");
+        }
+    }
+}
