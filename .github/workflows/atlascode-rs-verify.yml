@@ -2,7 +2,7 @@ name: atlascode-rs release qualification
 on:
   push:
     branches: ['atlascode-rs/rebrand-20261004']
-    paths: ['tools/atlascode-rs/**', '.github/workflows/atlascode-rs-verify.yml']
+    paths: ['tools/atlascode-rs/**', 'tools/atlascode-rs-release/installer-fixes.py', '.github/workflows/atlascode-rs-verify.yml']
 permissions:
   contents: read
 concurrency:
@@ -28,7 +28,9 @@ jobs:
           cp tools/atlascode-rs/import.py source/tools/rebrand-import.py
           cp tools/atlascode-rs/augment.py source/tools/rebrand-augment.py
           cp tools/atlascode-rs/refine.py source/tools/rebrand-refine.py
+          cp tools/atlascode-rs-release/installer-fixes.py source/tools/rebrand-installer-fixes.py
           python3 tools/atlascode-rs/refine.py source | tee prepared/evidence/refine.log
+          python3 tools/atlascode-rs-release/installer-fixes.py source | tee prepared/evidence/installer-fixes.log
           (cd source && cargo fmt --all && cargo fmt --all -- --check) 2>&1 | tee prepared/evidence/format.log
           python3 tools/atlascode-rs/refine.py source --finalize | tee prepared/evidence/ledger.log
           python3 source/tools/verify-brand.py | tee prepared/evidence/brand-audit.json
@@ -55,13 +57,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: atlascode-rs-prepared
-          path: input
+        with: {name: atlascode-rs-prepared, path: input}
       - run: tar -xzf input/source.tar.gz
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.21.0'
+        with: {node-version: '24.21.0'}
       - name: Complete bridge suite and locked dependency checks
         working-directory: atlascode-rs
         shell: bash
@@ -97,10 +96,7 @@ jobs:
           node --test scripts/install/install-progress.test.mjs 2>&1 | tee ../quality-evidence/install-progress-tests.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        with:
-          name: atlascode-rs-quality-evidence
-          path: quality-evidence/
-          retention-days: 30
+        with: {name: atlascode-rs-quality-evidence, path: quality-evidence/, retention-days: 30}
   native:
     needs: prepare
     strategy:
@@ -117,14 +113,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: atlascode-rs-prepared
-          path: input
+        with: {name: atlascode-rs-prepared, path: input}
       - shell: bash
         run: tar -xzf input/source.tar.gz
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.21.0'
+        with: {node-version: '24.21.0'}
       - name: Native toolchain and complete bridge suite
         working-directory: atlascode-rs
         shell: bash
@@ -164,15 +157,15 @@ jobs:
           cp "$binary" ../output/dist-assets/atlascode-rs-${{ matrix.target }}${{ endsWith(matrix.exe, '.exe') && '.exe' || '' }}
           node scripts/runtime/stage-bun-runtime.mjs --download --platform ${{ matrix.platform }} --dist-platform ../output/dist-platform 2>&1 | tee ../output/evidence/${{ matrix.platform }}/bun-stage.log
           { echo builder_commit=${{ github.sha }}; echo target=${{ matrix.target }}; echo platform=${{ matrix.platform }}; echo version=0.1.0; cat ../input/evidence/source-tree.txt; rustc -Vv; } > ../output/evidence/${{ matrix.platform }}/build-metadata.txt
-      - name: Windows installer function tests
+      - name: Windows installer function tests in independent processes
         if: runner.os == 'Windows'
         working-directory: atlascode-rs
         shell: pwsh
         run: |
-          & ./scripts/install/test-install-path.ps1
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & ./scripts/install/test-install-version-guard.ps1
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & pwsh -NoLogo -NoProfile -File ./scripts/install/test-install-path.ps1 2>&1 | Tee-Object ../output/evidence/${{ matrix.platform }}/installer-path.log
+          if ($LASTEXITCODE -ne 0) { throw 'PATH guard tests failed' }
+          & pwsh -NoLogo -NoProfile -File ./scripts/install/test-install-version-guard.ps1 2>&1 | Tee-Object ../output/evidence/${{ matrix.platform }}/installer-version.log
+          if ($LASTEXITCODE -ne 0) { throw 'Version guard tests failed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -186,18 +179,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: atlascode-rs-prepared
-          path: input
+        with: {name: atlascode-rs-prepared, path: input}
       - run: tar -xzf input/source.tar.gz
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: atlascode-rs-native-*
-          path: atlascode-rs/
-          merge-multiple: true
+        with: {pattern: 'atlascode-rs-native-*', path: atlascode-rs/, merge-multiple: true}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.21.0'
+        with: {node-version: '24.21.0'}
       - name: Build real distributable packages
         working-directory: atlascode-rs
         shell: bash
@@ -221,46 +208,22 @@ jobs:
           cp -r dist-npm/manifests ../package-evidence/npm-manifests
           if find dist-npm -type f \( -iname '*.woff' -o -iname '*.woff2' -o -iname '*.ttf' -o -iname '*.otf' \) | grep .; then exit 1; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-linux-x64-gnu
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-x64-gnu.tar.gz
-          retention-days: 30
+        with: {name: atlascode-rs-install-linux-x64-gnu, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-x64-gnu.tar.gz, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-linux-arm64-gnu
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz
-          retention-days: 30
+        with: {name: atlascode-rs-install-linux-arm64-gnu, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-darwin-x64
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-x64.tar.gz
-          retention-days: 30
+        with: {name: atlascode-rs-install-darwin-x64, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-x64.tar.gz, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-darwin-arm64
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-arm64.tar.gz
-          retention-days: 30
+        with: {name: atlascode-rs-install-darwin-arm64, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-darwin-arm64.tar.gz, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-win32-x64-msvc
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-x64-msvc.zip
-          retention-days: 30
+        with: {name: atlascode-rs-install-win32-x64-msvc, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-x64-msvc.zip, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-install-win32-arm64-msvc
-          path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-arm64-msvc.zip
-          retention-days: 30
+        with: {name: atlascode-rs-install-win32-arm64-msvc, path: atlascode-rs/dist-install/atlascode-rs-0.1.0-win32-arm64-msvc.zip, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        with:
-          name: atlascode-rs-package-evidence
-          path: package-evidence/
-          retention-days: 30
+        with: {name: atlascode-rs-package-evidence, path: package-evidence/, retention-days: 30}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: atlascode-rs-npm-tarballs
-          path: atlascode-rs/dist-pack/
-          retention-days: 30
+        with: {name: atlascode-rs-npm-tarballs, path: atlascode-rs/dist-pack/, retention-days: 30}
   smoke:
     needs: package
     strategy:
@@ -277,18 +240,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: atlascode-rs-prepared
-          path: input
+        with: {name: atlascode-rs-prepared, path: input}
       - shell: bash
         run: tar -xzf input/source.tar.gz
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: atlascode-rs-install-${{ matrix.platform }}
-          path: atlascode-rs/dist-install
+        with: {name: 'atlascode-rs-install-${{ matrix.platform }}', path: atlascode-rs/dist-install}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.21.0'
+        with: {node-version: '24.21.0'}
       - name: Execute real portable app without system Node or Bun
         working-directory: atlascode-rs
         shell: bash
@@ -298,7 +256,4 @@ jobs:
           node scripts/install/smoke-install-archive.mjs --platform ${{ matrix.platform }} --real-binary --no-system-runtime 2>&1 | tee ../smoke-evidence/${{ matrix.platform }}/archive-smoke.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        with:
-          name: atlascode-rs-smoke-${{ matrix.platform }}
-          path: smoke-evidence/
-          retention-days: 30
+        with: {name: 'atlascode-rs-smoke-${{ matrix.platform }}', path: smoke-evidence/, retention-days: 30}
