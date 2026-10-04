@@ -1,0 +1,48 @@
+name: atlascode-rs Windows installer confirmation
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-windows-confirm.yml']
+permissions: {contents: read, actions: read}
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: windows-latest, platform: win32-x64-msvc}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-finish-source
+          run-id: 37194909957
+          github-token: ${{ github.token }}
+          path: input
+      - name: Unpack exact final source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat input/evidence/source-tree.txt)" = 906573f0518d808b5c0668fb3e349e372834070f
+          tar -xzf input/source.tar.gz
+          mkdir -p evidence/${{ matrix.platform }}
+          cp input/evidence/source-tree.txt evidence/${{ matrix.platform }}/source-tree.txt
+      - name: Run each unchanged installer test in its own PowerShell process
+        working-directory: atlascode-rs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & pwsh -NoProfile -File ./scripts/install/test-install-path.ps1 2>&1 | Tee-Object ../evidence/${{ matrix.platform }}/install-path.log
+          if ($LASTEXITCODE -ne 0) { throw "Installer path suite exited $LASTEXITCODE" }
+          & pwsh -NoProfile -File ./scripts/install/test-install-version-guard.ps1 2>&1 | Tee-Object ../evidence/${{ matrix.platform }}/install-version.log
+          if ($LASTEXITCODE -ne 0) { throw "Installer version suite exited $LASTEXITCODE" }
+          if (-not (Select-String -Quiet 'PowerShell installer version guard tests passed' ../evidence/${{ matrix.platform }}/install-version.log)) { throw 'Missing version guard completion' }
+          'Both independent installer test processes passed. The tests intentionally launch failing children; their stale in-process LASTEXITCODE is not the suite exit status.' | Set-Content ../evidence/${{ matrix.platform }}/CONFIRMATION.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-windows-confirm-${{ matrix.platform }}
+          path: evidence/
+          retention-days: 30
