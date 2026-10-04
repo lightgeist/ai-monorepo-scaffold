@@ -37,6 +37,16 @@ edit('src/ui/footer_rows.rs',
  'let fitted = fit_footer_suffix_text(text, 14).expect("fitted text");\n        assert!(fitted.starts_with("..."));\n        assert!(fitted.ends_with("atlascode_rs"));\n        assert!(UnicodeWidthStr::width(fitted.as_str()) <= 14);',
  'let width = UnicodeWidthStr::width("atlascode_rs") + 3;\n        let fitted = fit_footer_suffix_text(text, width).expect("fitted text");\n        assert!(fitted.starts_with("..."));\n        assert!(fitted.ends_with("atlascode_rs"));\n        assert!(UnicodeWidthStr::width(fitted.as_str()) <= width);')
 
+# Both paths must resolve to the exact expected file, including macOS /private/var.
+edit('tests/claude_config_dir.rs',
+ '        local["path"],\n        project.join(".claude").join("settings.local.json").to_string_lossy().as_ref()',
+ '        std::fs::canonicalize(local["path"].as_str().expect("local path")).expect("resolved local path"),\n        std::fs::canonicalize(project.join(".claude/settings.local.json")).expect("expected local path")')
+# Windows ARM's PowerShell JSON fixture exceeded the five-second response budget.
+# This is a bounded test deadline, not a production timeout or an ordering waiver.
+edit('src/app/connect/bridge_lifecycle.rs',
+ '        for expected_event in ["btw_failed", "btw_result"] {\n            let envelope = tokio::time::timeout(Duration::from_secs(5), bridge.recv())',
+ '        let response_budget = if cfg!(all(windows, target_arch = "aarch64")) { 30 } else { 5 };\n        for expected_event in ["btw_failed", "btw_result"] {\n            let envelope = tokio::time::timeout(Duration::from_secs(response_budget), bridge.recv())')
+
 p='scripts/install/smoke-install-archive.mjs'
 edit(p,'import { envWithoutSystemRuntimePath }','import { envWithoutSystemRuntimePath, resolveExecutablesOnPath }')
 edit(p,'options.noSystemRuntime ? envWithoutSystemRuntimePath() : { ...process.env }','options.noSystemRuntime ? portableEnvironment() : { ...process.env }')
@@ -113,6 +123,10 @@ selection now quotes its recursive glob so Unix and Windows execute the same
 fixture intercepts ESM imports only, keeping the production version lookup real.
 Portable verification removes both system runtimes from the app PATH, executes
 the real binary/bridge and checks missing-runtime/script failure controls.
+The macOS configuration fixture compares canonical existing file paths so /var
+and /private/var name the same expected project file. The Windows ARM PowerShell
+fixture has a bounded 30-second response deadline instead of five seconds;
+exact NDJSON identity, ordering and completion assertions remain unchanged.
 These verification changes do not alter SDK, permissions, model routing or billing.
 ''')
 print('Applied native-discovered test repairs and stronger real portable runtime qualification.')
