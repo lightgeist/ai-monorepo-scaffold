@@ -1,0 +1,485 @@
+import {
+  listSessions,
+  type ListSessionsOptions,
+} from "@anthropic-ai/claude-agent-sdk";
+import { writeSync } from "node:fs";
+import type {
+  BridgeEvent,
+  BridgeEventEnvelope,
+  McpOperationError,
+  SessionUpdate,
+} from "../types.js";
+import { buildModeState } from "./commands.js";
+import { mapSdkSessions } from "./history.js";
+import { bridgeLogger, LOG_TARGETS, logBridgeEventSent } from "./logger.js";
+import {
+  detachSessionForClose,
+  resolveCurrentModel,
+  sessionById,
+  trackSessionCloseTask,
+  type SessionState,
+} from "./session_lifecycle.js";
+
+const SESSION_LIST_LIMIT = 50;
+let sessionListingDir: string | undefined;
+type ProtocolEventWriter = (line: string) => void;
+
+function writeProtocolEventToStdout(line: string): void {
+  const payload = Buffer.from(line);
+  let offset = 0;
+  while (offset < payload.length) {
+    const written = writeSync(
+      process.stdout.fd,
+      payload,
+      offset,
+      payload.length - offset,
+    );
+    if (written <= 0) {
+      throw new Error("bridge stdout write made no progress");
+    }
+    offset += written;
+  }
+}
+
+let protocolEventWriter: ProtocolEventWriter = writeProtocolEventToStdout;
+
+export function replaceProtocolEventWriter(
+  writer: ProtocolEventWriter,
+): () => void {
+  const previous = protocolEventWriter;
+  protocolEventWriter = writer;
+  return () => {
+    protocolEventWriter = previous;
+  };
+}
+
+export function buildSessionListOptions(
+  dir: string | undefined,
+  limit = SESSION_LIST_LIMIT,
+): ListSessionsOptions {
+  return dir
+    ? { dir, includeProgrammatic: true, includeWorktrees: true, limit }
+    : { includeProgrammatic: true, limit };
+}
+
+export function setSessionListingDir(dir: string | undefined): void {
+  sessionListingDir = dir;
+}
+
+export function currentSessionListOptions(): ListSessionsOptions {
+  return buildSessionListOptions(sessionListingDir);
+}
+
+export function writeEvent(event: BridgeEvent, requestId?: string): void {
+  if (
+    "session_id" in event &&
+    event.event !== "connected" &&
+    event.event !== "session_replaced"
+  ) {
+    const session = sessionById(event.session_id);
+    if (session?.deferConnect) {
+      const events = session.deferredBridgeEvents ?? [];
+      events.push({ event, ...(requestId ? { requestId } : {}) });
+      session.deferredBridgeEvents = events;
+      return;
+    }
+  }
+  writeEventNow(event, requestId);
+}
+
+function writeEventNow(event: BridgeEvent, requestId?: string): void {
+  const envelope: BridgeEventEnvelope = {
+    ...(requestId ? { request_id: requestId } : {}),
+    ...event,
+  };
+  const serialized = JSON.stringify(envelope);
+  logBridgeEventSent(event, requestId, Buffer.byteLength(serialized) + 1);
+  protocolEventWriter(`${serialized}\n`);
+}
+
+export function failConnection(message: string, requestId?: string): void {
+  writeEvent({ event: "connection_failed", message }, requestId);
+}
+
+export function slashError(
+  sessionId: string,
+  message: string,
+  requestId?: string,
+): void {
+  writeEvent(
+    { event: "slash_error", session_id: sessionId, message },
+    requestId,
+  );
+}
+
+export function emitSessionResumeFailed(
+  sessionId: string,
+  operationId: string,
+  message: string,
+): void {
+  writeEventNow(
+    {
+      event: "session_resume_failed",
+      session_id: sessionId,
+      message,
+    },
+    operationId,
+  );
+}
+
+export function emitRuntimeReloadCompleted(
+  sessionId: string,
+  requestId?: string,
+): void {
+  writeEvent(
+    { event: "runtime_reload_completed", session_id: sessionId },
+    requestId,
+  );
+}
+
+export function emitRuntimeReloadHeld(
+  sessionId: string,
+  cacheImpact: import("../types.js").RuntimeReloadCacheImpact,
+  requestId?: string,
+): void {
+  writeEvent(
+    { event: "runtime_reload_held", session_id: sessionId, cache_impact: cacheImpact },
+    requestId,
+  );
+}
+
+export function emitRuntimeReloadFailed(
+  sessionId: string,
+  message: string,
+  requestId?: string,
+): void {
+  writeEvent(
+    { event: "runtime_reload_failed", session_id: sessionId, message },
+    requestId,
+  );
+}
+
+export function emitMcpOperationError(
+  sessionId: string,
+  error: McpOperationError,
+  requestId?: string,
+): void {
+  writeEvent(
+    { event: "mcp_operation_error", session_id: sessionId, error },
+    requestId,
+  );
+}
+
+export function emitSessionUpdate(
+  sessionId: string,
+  update: SessionUpdate,
+): void {
+  writeEvent({ event: "session_update", session_id: sessionId, update });
+}
+
+export function emitPermissionRequestEvent(
+  sessionId: string,
+  request: Extract<BridgeEvent, { event: "permission_request" }>["request"],
+): void {
+  bridgeLogger.info({
+    target: LOG_TARGETS.BRIDGE_PERMISSION,
+    eventName: "permission_request_emitted",
+    message: "permission request emitted",
+    outcome: "success",
+    sessionId,
+    toolCallId: request.tool_call.tool_call_id,
+    count: request.options.length,
+    fields: {
+      option_count: request.options.length,
+      tool_title: request.tool_call.title,
+    },
+  });
+  writeEvent({ event: "permission_request", session_id: sessionId, request });
+}
+
+export function emitQuestionRequestEvent(
+  sessionId: string,
+  request: Extract<BridgeEvent, { event: "question_request" }>["request"],
+): void {
+  bridgeLogger.info({
+    target: LOG_TARGETS.BRIDGE_PERMISSION,
+    eventName: "question_request_emitted",
+    message: "question request emitted",
+    outcome: "success",
+    sessionId,
+    toolCallId: request.tool_call.tool_call_id,
+    count: request.prompt.options.length,
+    fields: {
+      question_index: request.question_index,
+      total_questions: request.total_questions,
+      option_count: request.prompt.options.length,
+      header: request.prompt.header,
+    },
+  });
+  writeEvent({ event: "question_request", session_id: sessionId, request });
+}
+
+export function emitUserDialogRequestEvent(
+  sessionId: string,
+  request: Extract<BridgeEvent, { event: "user_dialog_request" }>["request"],
+): void {
+  bridgeLogger.info({
+    target: LOG_TARGETS.BRIDGE_PERMISSION,
+    eventName: "user_dialog_request_emitted",
+    message: "user dialog request emitted",
+    outcome: "success",
+    sessionId,
+    requestId: request.request_id,
+    count: request.options.length,
+    fields: {
+      dialog_kind: request.dialog_kind,
+      option_count: request.options.length,
+      original_model: request.payload.original_model,
+      fallback_model: request.payload.fallback_model,
+    },
+  });
+  writeEvent({ event: "user_dialog_request", session_id: sessionId, request });
+}
+
+export function emitElicitationRequestEvent(
+  sessionId: string,
+  request: Extract<BridgeEvent, { event: "elicitation_request" }>["request"],
+): void {
+  bridgeLogger.info({
+    target: LOG_TARGETS.BRIDGE_PERMISSION,
+    eventName: "elicitation_request_emitted",
+    message: "elicitation request emitted",
+    outcome: "success",
+    sessionId,
+    requestId: request.request_id,
+    fields: {
+      server_name: request.server_name,
+      mode: request.mode,
+      has_url: request.url !== undefined,
+      has_requested_schema: request.requested_schema !== undefined,
+    },
+  });
+  writeEvent({ event: "elicitation_request", session_id: sessionId, request });
+}
+
+export function buildConnectBridgeEvent(
+  session: SessionState,
+  eventName: "connected" | "session_replaced",
+): BridgeEvent {
+  const historyUpdates = session.resumeUpdates;
+  return eventName === "session_replaced"
+    ? {
+        event: "session_replaced",
+        session_id: session.sessionId,
+        cwd: session.cwd,
+        current_model: session.currentModel ?? resolveCurrentModel(session),
+        available_models: session.availableModels,
+        mode: session.mode ? buildModeState(session, session.mode) : null,
+        ultracode: session.ultracode ?? null,
+        fast_mode_state: session.fastModeState,
+        ...(session.fastModeDisabledReason
+          ? { fast_mode_disabled_reason: session.fastModeDisabledReason }
+          : {}),
+        ...(historyUpdates && historyUpdates.length > 0
+          ? { history_updates: historyUpdates }
+          : {}),
+        ...(session.restoredInput !== undefined
+          ? { restored_input: session.restoredInput }
+          : {}),
+      }
+    : {
+        event: "connected",
+        session_id: session.sessionId,
+        cwd: session.cwd,
+        current_model: session.currentModel ?? resolveCurrentModel(session),
+        available_models: session.availableModels,
+        mode: session.mode ? buildModeState(session, session.mode) : null,
+        ultracode: session.ultracode ?? null,
+        fast_mode_state: session.fastModeState,
+        ...(session.fastModeDisabledReason
+          ? { fast_mode_disabled_reason: session.fastModeDisabledReason }
+          : {}),
+        ...(historyUpdates && historyUpdates.length > 0
+          ? { history_updates: historyUpdates }
+          : {}),
+      };
+}
+
+function logConnectEventEmission(
+  session: SessionState,
+  eventName: "connected" | "session_replaced",
+  requestId?: string,
+): void {
+  bridgeLogger.info({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName:
+      eventName === "session_replaced"
+        ? "session_replaced_emitted"
+        : "session_connected_emitted",
+    message:
+      eventName === "session_replaced"
+        ? "session replaced event emitted"
+        : "session connected event emitted",
+    outcome: "success",
+    ...(requestId ? { requestId } : {}),
+    sessionId: session.sessionId,
+    fields: {
+      history_update_count: session.resumeUpdates?.length ?? 0,
+      available_model_count: session.availableModels.length,
+      stale_session_count: session.sessionsToCloseAfterConnect?.length ?? 0,
+      has_restored_input: session.restoredInput !== undefined,
+    },
+  });
+}
+
+export function emitConnectEvent(session: SessionState): void {
+  const staleSessions = session.sessionsToCloseAfterConnect;
+  if (staleSessions) {
+    for (const stale of staleSessions) {
+      if (stale !== session) {
+        detachSessionForClose(stale);
+      }
+    }
+  }
+  const bridgeEvent = buildConnectBridgeEvent(session, session.connectEvent);
+  logConnectEventEmission(
+    session,
+    session.connectEvent,
+    session.connectRequestId,
+  );
+  writeEvent(bridgeEvent, session.connectRequestId);
+  if (session.pendingRewindResult) {
+    writeEvent(
+      { ...session.pendingRewindResult, session_id: session.sessionId },
+      session.connectRequestId,
+    );
+    session.pendingRewindResult = undefined;
+  }
+  session.connectRequestId = undefined;
+  session.connected = true;
+  session.authHintSent = false;
+  const deferredBridgeEvents = session.deferredBridgeEvents;
+  session.deferredBridgeEvents = undefined;
+  if (deferredBridgeEvents) {
+    for (const deferred of deferredBridgeEvents) {
+      writeEventNow(
+        { ...deferred.event, session_id: session.sessionId } as BridgeEvent,
+        deferred.requestId,
+      );
+    }
+  }
+  session.resumeUpdates = undefined;
+  session.restoredInput = undefined;
+
+  session.sessionsToCloseAfterConnect = undefined;
+  if (!staleSessions || staleSessions.length === 0) {
+    refreshSessionsList();
+    return;
+  }
+  const closeTask = (async () => {
+    // Lazy import to break circular dependency at module-evaluation time.
+    const { closeSessionWithLogging } = await import("./session_lifecycle.js");
+    for (const stale of staleSessions) {
+      if (stale === session) {
+        continue;
+      }
+      await closeSessionWithLogging(stale, { reason: "stale_after_connect" });
+    }
+    refreshSessionsList();
+  })();
+  trackSessionCloseTask(closeTask);
+}
+
+export function emitSessionReplacedEvent(
+  session: SessionState,
+  requestId?: string,
+): void {
+  const bridgeEvent = buildConnectBridgeEvent(session, "session_replaced");
+  logConnectEventEmission(session, "session_replaced", requestId);
+  writeEvent(bridgeEvent, requestId);
+  emitAvailableCommandsSnapshot(session);
+  if (session.pendingRewindResult) {
+    writeEvent(
+      { ...session.pendingRewindResult, session_id: session.sessionId },
+      requestId,
+    );
+    session.pendingRewindResult = undefined;
+  }
+  session.resumeUpdates = undefined;
+  session.restoredInput = undefined;
+  refreshSessionsList();
+}
+
+export async function emitSessionsList(requestId?: string): Promise<void> {
+  bridgeLogger.debug({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName: "sessions_list_requested",
+    message: "sessions list requested",
+    outcome: "start",
+    ...(requestId ? { requestId } : {}),
+    fields: {
+      has_listing_dir: sessionListingDir !== undefined,
+      limit: SESSION_LIST_LIMIT,
+    },
+  });
+  try {
+    const sdkSessions = await listSessions(currentSessionListOptions());
+    const sessions = mapSdkSessions(sdkSessions, SESSION_LIST_LIMIT);
+    bridgeLogger.info({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "sessions_list_completed",
+      message: "sessions list completed",
+      outcome: "success",
+      ...(requestId ? { requestId } : {}),
+      count: sessions.length,
+      fields: { session_count: sessions.length },
+    });
+    writeEvent({ event: "sessions_listed", sessions }, requestId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    bridgeLogger.warn({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "sessions_list_failed",
+      message: "failed to list SDK sessions",
+      outcome: "failure",
+      ...(requestId ? { requestId } : {}),
+      fields: { error_message: message },
+    });
+    writeEvent({ event: "sessions_listed", sessions: [] }, requestId);
+  }
+}
+
+/** Replay the current authority after the host resets its session inventory. */
+export function emitAvailableCommandsSnapshot(session: SessionState): void {
+  const snapshot = session.availableCommands;
+  if (!snapshot) {
+    return;
+  }
+  const { source, generation, commands } = snapshot;
+  bridgeLogger.info({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName: "available_commands_update_emitted",
+    message: "available commands update emitted",
+    outcome: "success",
+    sessionId: session.sessionId,
+    count: commands.length,
+    fields: {
+      source,
+      generation,
+      command_count: commands.length,
+      command_names: commands.map((command) => command.name),
+    },
+  });
+  emitSessionUpdate(session.sessionId, {
+    type: "available_commands_update",
+    commands,
+    source,
+    generation,
+  });
+}
+
+export function refreshSessionsList(): void {
+  void emitSessionsList().catch(() => {
+    // Defensive no-op.
+  });
+}

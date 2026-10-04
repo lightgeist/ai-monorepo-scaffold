@@ -1,0 +1,241 @@
+{
+  "schema": "atlascode-rs-release-verification/v3",
+  "name": "atlascode-rs",
+  "version": "0.1.0",
+  "release_kind": "unsigned preview",
+  "passed": true,
+  "upstream_commit": "ddcf1eb5513b02ca2a68964220f115da0a69a80a",
+  "source_commit": "60a3929f5cfb5a529b39469000cf9444b58d63e9",
+  "source_tree": "906573f0518d808b5c0668fb3e349e372834070f",
+  "native_baseline_commit": "8a8a073ee47dc3155e43991a409b7d46a76a9d3c",
+  "native_inputs_unchanged": 323,
+  "native_run": 37164321262,
+  "portable_run": 37194909957,
+  "portable_workflow_conclusion": "failure",
+  "windows_confirmation_run": 37195342387,
+  "dependency_audit_run": 37164474484,
+  "platforms": [
+    {
+      "platform": "darwin-arm64",
+      "rust_passed": 2014,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    },
+    {
+      "platform": "darwin-x64",
+      "rust_passed": 2014,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    },
+    {
+      "platform": "linux-x64-gnu",
+      "rust_passed": 2014,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    },
+    {
+      "platform": "linux-arm64-gnu",
+      "rust_passed": 2014,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    },
+    {
+      "platform": "win32-x64-msvc",
+      "rust_passed": 2018,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    },
+    {
+      "platform": "win32-arm64-msvc",
+      "rust_passed": 2018,
+      "bridge_passed": 439,
+      "pty_scenarios": 16,
+      "portable_runtime": "passed",
+      "negative_controls": "passed"
+    }
+  ],
+  "quality": {
+    "bridge-tests": {
+      "tests": 439,
+      "pass": 439,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "node-core-tests": {
+      "tests": 44,
+      "pass": 44,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "install-progress-tests": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "installer_path_repetitions": 10,
+  "brand_checks": 40,
+  "rebrand_changes": {
+    "modified": 119,
+    "removed": 24,
+    "added": 19
+  },
+  "archives": [
+    {
+      "platform": "darwin-arm64",
+      "file": "atlascode-rs-0.1.0-darwin-arm64.tar.gz",
+      "bytes": 137161954,
+      "sha256": "16b9e18e3f72d4f12132d606cba7ba93bf51c9cc3724a47399cf41dc4ab6a301",
+      "file_count": 2502,
+      "executables": {
+        "atlascode-rs": {
+          "format": "Mach-O",
+          "architecture": "arm64",
+          "bytes": 22117488,
+          "sha256": "b6faa0b003b3f0a70bc4a71be9bbb88806dc8f2fa971de2ad0a88fa5d525f51a"
+        },
+        "atlascode-rs-bridge-bun": {
+          "format": "Mach-O",
+          "architecture": "arm64",
+          "bytes": 63558256,
+          "sha256": "539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf"
+        }
+      },
+      "passed": true
+    },
+    {
+      "platform": "darwin-x64",
+      "file": "atlascode-rs-0.1.0-darwin-x64.tar.gz",
+      "bytes": 145194057,
+      "sha256": "14e5d440b08797095f1358e225381e6e2094e5f1e9354bffabb7729a659ebe1e",
+      "file_count": 2502,
+      "executables": {
+        "atlascode-rs": {
+          "format": "Mach-O",
+          "architecture": "x64",
+          "bytes": 23846760,
+          "sha256": "bdc32846a5cf098576463816ea69621f1080e335a63796edd788851255e8378e"
+        },
+        "atlascode-rs-bridge-bun": {
+          "format": "Mach-O",
+          "architecture": "x64",
+          "bytes": 70704544,
+          "sha256": "ca8a18d0116d7b6b19f53bb0d8c48e487c0757cab4dc3f4f8cc5e43a44cd75d8"
+        }
+      },
+      "passed": true
+    },
+    {
+      "platform": "linux-x64-gnu",
+      "file": "atlascode-rs-0.1.0-linux-x64-gnu.tar.gz",
+      "bytes": 160090228,
+      "sha256": "6b274ef12109858d01ea9e27dbb48a9d1000292bd5b996597ffb7cfa46918eaf",
+      "file_count": 2502,
+      "executables": {
+        "atlascode-rs": {
+          "format": "ELF",
+          "architecture": "x64",
+          "bytes": 28303976,
+          "sha256": "77b544602b3bde352f59037463ae464c9bd294fc85e1a172f9c6c411b0887069"
+        },
+        "atlascode-rs-bridge-bun": {
+          "format": "ELF",
+          "architecture": "x64",
+          "bytes": 80761952,
+          "sha256": "33d56b070be6a9e3da0ab013038b43d1645d0534ca811ecdba4472599117eb4b"
+        }
+      },
+      "passed": true
+    },
+    {
+      "platform": "linux-arm64-gnu",
+      "file": "atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz",
+      "bytes": 159332564,
+      "sha256": "6da5100037feff569face22aea35b2ca88b96e9f20cced87e9e4e917a2cef783",
+      "file_count": 2502,
+      "executables": {
+        "atlascode-rs": {
+          "format": "ELF",
+          "architecture": "arm64",
+          "bytes": 27518320,
+          "sha256": "5895b7ee569f7707ef96f1b1ab7cd4003e916a79688698399baa3b729f5ba47d"
+        },
+        "atlascode-rs-bridge-bun": {
+          "format": "ELF",
+          "architecture": "arm64",
+          "bytes": 80600240,
+          "sha256": "086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9"
+        }
+      },
+      "passed": true
+    },
+    {
+      "platform": "win32-x64-msvc",
+      "file": "atlascode-rs-0.1.0-win32-x64-msvc.zip",
+      "bytes": 164860118,
+      "sha256": "116b77b65f0f300df246231d38747d682ef50650dfa69562a8fa93d743f7a947",
+      "file_count": 2493,
+      "executables": {
+        "atlascode-rs-bridge-bun.exe": {
+          "format": "PE",
+          "architecture": "x64",
+          "bytes": 88825944,
+          "sha256": "627d2e4775c24bdedee2cd7ccc18dcadae061e5345274ab6e3c4c797927bfb8f"
+        },
+        "atlascode-rs.exe": {
+          "format": "PE",
+          "architecture": "x64",
+          "bytes": 20119040,
+          "sha256": "97c9591fce36637b052a3da44899ac18a32a58ff4086af6fdada3b90b59edcdd"
+        }
+      },
+      "passed": true
+    },
+    {
+      "platform": "win32-arm64-msvc",
+      "file": "atlascode-rs-0.1.0-win32-arm64-msvc.zip",
+      "bytes": 156600071,
+      "sha256": "0689ac61fe07a48c32ed356d3ee425e5048fdb1662d3c66e2b7cef029b6f3d6e",
+      "file_count": 2493,
+      "executables": {
+        "atlascode-rs-bridge-bun.exe": {
+          "format": "PE",
+          "architecture": "arm64",
+          "bytes": 78576216,
+          "sha256": "00cf2c040f04281cf9324282a84338c2dfe6597007bf73b7ee888d512297d71f"
+        },
+        "atlascode-rs.exe": {
+          "format": "PE",
+          "architecture": "arm64",
+          "bytes": 18264576,
+          "sha256": "1425b0f2e869f021189453d8dbd9da778e034a8c5bcdf044fc1fd940611aa318"
+        }
+      },
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "No authenticated provider or billable model task tested.",
+    "PTY conversations use a scripted NDJSON peer.",
+    "Not macOS-notarized or Windows Authenticode-signed.",
+    "No public npm/Cargo publication.",
+    "Provider-owned state may be shared with official CLI.",
+    "No physical-device UX, penetration test, performance benchmark or blanket OS-version compatibility claim.",
+    "Native build and final source commits differ only outside the checked native input boundary; final installer changes are separately qualified."
+  ],
+  "ci_wrapper_correction": "The initial Windows wrapper checked LASTEXITCODE leaked by intentional negative-test children. Both unchanged suites reported success; the two-host confirmation reran them in separate pwsh -File processes and checked actual suite exit statuses. Original workflow conclusions are retained, not relabeled."
+}

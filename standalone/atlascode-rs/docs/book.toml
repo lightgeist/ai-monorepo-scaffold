@@ -1,0 +1,18 @@
+[book]
+title = "atlascode-rs"
+authors = ["atlascode-rs contributors", "Simon Peter Rothgang (upstream)"]
+description = "User and contributor documentation for atlascode-rs."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/lightgeist/ai-monorepo-scaffold"
+edit-url-template = "https://github.com/lightgeist/ai-monorepo-scaffold/edit/atlascode-rs/rebrand-20261004/standalone/atlascode-rs/docs/{path}"
+site-url = "/atlascode-rs/"
+default-theme = "light"
+preferred-dark-theme = "ayu"
+no-section-label = true

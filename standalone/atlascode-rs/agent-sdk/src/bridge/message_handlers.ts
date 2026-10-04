@@ -1,0 +1,2473 @@
+import { refreshUltracode } from "./ultracode.js";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  BridgeCommand,
+  SessionUpdate,
+  SystemNoticeSeverity,
+  TaskMetadata,
+  TerminalReason,
+  TranscriptRetractionReason,
+  ToolCallUpdateFields,
+} from "../types.js";
+import { asRecordOrNull } from "./shared.js";
+import {
+  toPermissionMode,
+  buildModeState,
+  refreshSupportedModesForSession,
+} from "./commands.js";
+import {
+  writeEvent,
+  emitSessionUpdate,
+  emitConnectEvent,
+  emitSessionReplacedEvent,
+} from "./events.js";
+import {
+  TOOL_RESULT_TYPES,
+  isToolSearchToolName,
+  isToolSearchToolResultType,
+  unwrapToolUseResult,
+  parseToolNonExecutionMetadata,
+  parseDetachedToolNotification,
+} from "./tooling.js";
+import {
+  emitToolCall,
+  emitToolCallUpdate,
+  emitToolResultUpdate,
+  finalizeOpenToolCalls,
+  emitToolProgressUpdate,
+  emitToolSummaryUpdate,
+  ensureToolCallVisible,
+  resolveTaskToolUseId,
+  defersTaskNotificationCompletion,
+  toolAcceptsTaskLifecycle,
+  toolAcceptsTerminalTaskNotification,
+  toolPreservesTaskNotificationOutput,
+  taskProgressText,
+  taskUpdatedFields,
+  type ToolCorrelationMetadata,
+} from "./tool_calls.js";
+import {
+  applyBackgroundTasksChanged,
+  applyTaskLifecycleState,
+} from "./tasks.js";
+import { linkTaskToolUse, unlinkTaskToolUse } from "./task_links.js";
+import {
+  emitAuthRequired,
+  classifyTurnErrorKind,
+  emitFastModeUpdate,
+  emitFastModeUpdateIfChanged,
+  setFastModeSnapshotIfChanged,
+} from "./error_classification.js";
+import {
+  mapAvailableAgentsFromNames,
+  emitAvailableAgentsIfChanged,
+  refreshAvailableAgents,
+} from "./agents.js";
+import {
+  mapInitSlashCommands,
+  mapSdkSlashCommands,
+  updateAvailableCommands,
+} from "./available_commands.js";
+import {
+  buildApiRetryUpdate,
+  buildRateLimitUpdate,
+  buildSubagentRetryUpdate,
+  normalizeSettingsParseErrors,
+  nonNegativeIntegerField,
+  nonNegativeNumberField,
+  numberField,
+  parseApiRetryError,
+  parseRuntimeSessionState,
+} from "./state_parsing.js";
+import { looksLikeAuthRequired } from "./auth.js";
+import type { SessionState } from "./session_lifecycle.js";
+import {
+  emitCurrentModelUpdate,
+  refreshCurrentModel,
+  updateSessionId,
+} from "./session_lifecycle.js";
+import { bridgeLogger, LOG_TARGETS } from "./logger.js";
+import { emitMcpSnapshotFromStatuses } from "./mcp.js";
+import { appendResourceLinks } from "./resource_links.js";
+import { closeSideQuestions } from "./side_questions.js";
+import { redactStartupDetail, startupFailureDetails } from "./startup_failures.js";
+
+export function textFromPrompt(
+  command: Extract<BridgeCommand, { command: "prompt" }>,
+): string {
+  const chunks = command.chunks ?? [];
+  return chunks
+    .map((chunk) => {
+      if (chunk.kind !== "text") {
+        return "";
+      }
+      return typeof chunk.value === "string" ? chunk.value : "";
+    })
+    .filter((part) => part.length > 0)
+    .join("");
+}
+
+/** MIME types supported by the Anthropic Vision API.
+ *  NOTE: Keep in sync with `SUPPORTED_IMAGE_MIME_TYPES` in
+ *  `src/app/clipboard_image.rs`. */
+const SUPPORTED_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+type SupportedImageMimeType =
+  | "image/png"
+  | "image/jpeg"
+  | "image/gif"
+  | "image/webp";
+
+type PromptContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: {
+        type: "base64";
+        media_type: SupportedImageMimeType;
+        data: string;
+      };
+    };
+
+function sdkCorrelationMetadata(
+  msg: Record<string, unknown>,
+): ToolCorrelationMetadata {
+  return {
+    requestId: typeof msg.request_id === "string" ? msg.request_id : undefined,
+    subagentType:
+      typeof msg.subagent_type === "string" ? msg.subagent_type : undefined,
+    taskDescription:
+      typeof msg.task_description === "string"
+        ? msg.task_description
+        : undefined,
+    parentAgentId:
+      typeof msg.parent_agent_id === "string" ? msg.parent_agent_id : undefined,
+  };
+}
+
+function sdkTaskMetadata(
+  msg: Record<string, unknown>,
+): TaskMetadata | undefined {
+  const metadata = sdkCorrelationMetadata(msg);
+  const taskType =
+    typeof msg.task_type === "string" && msg.task_type.length > 0
+      ? msg.task_type
+      : undefined;
+  const workflowName =
+    typeof msg.workflow_name === "string" && msg.workflow_name.length > 0
+      ? msg.workflow_name
+      : undefined;
+  const prompt =
+    typeof msg.prompt === "string" && msg.prompt.length > 0
+      ? msg.prompt
+      : undefined;
+  const outputFile =
+    typeof msg.output_file === "string" && msg.output_file.length > 0
+      ? msg.output_file
+      : undefined;
+  const status =
+    typeof msg.status === "string" && msg.status.length > 0
+      ? msg.status
+      : undefined;
+  const summary =
+    status && typeof msg.summary === "string" && msg.summary.length > 0
+      ? msg.summary
+      : undefined;
+  const reason = diagnosticToken(msg.reason);
+  const spawnDepth =
+    typeof msg.spawn_depth === "number" &&
+    Number.isSafeInteger(msg.spawn_depth) &&
+    msg.spawn_depth > 0
+      ? msg.spawn_depth
+      : undefined;
+  const taskMetadata: TaskMetadata = {
+    ...(metadata.requestId ? { request_id: metadata.requestId } : {}),
+    ...(metadata.subagentType ? { subagent_type: metadata.subagentType } : {}),
+    ...(metadata.taskDescription
+      ? { task_description: metadata.taskDescription }
+      : {}),
+    ...(metadata.parentAgentId
+      ? { parent_agent_id: metadata.parentAgentId }
+      : {}),
+    ...(taskType ? { task_type: taskType } : {}),
+    ...(workflowName ? { workflow_name: workflowName } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(outputFile ? { output_file: outputFile } : {}),
+    ...(summary ? { summary } : {}),
+    ...(status ? { terminal_status: status } : {}),
+    ...(reason ? { terminal_reason: reason } : {}),
+    ...(typeof msg.blocked === "boolean" ? { blocked: msg.blocked } : {}),
+    ...(typeof msg.is_backgrounded === "boolean"
+      ? { is_backgrounded: msg.is_backgrounded }
+      : {}),
+    ...(typeof msg.ambient === "boolean" ? { ambient: msg.ambient } : {}),
+    ...(spawnDepth !== undefined ? { spawn_depth: spawnDepth } : {}),
+  };
+  return Object.keys(taskMetadata).length > 0 ? taskMetadata : undefined;
+}
+
+function sdkMessageOriginKind(
+  msg: Record<string, unknown>,
+): string | undefined {
+  const origin =
+    msg.origin && typeof msg.origin === "object"
+      ? (msg.origin as Record<string, unknown>)
+      : null;
+  return typeof origin?.kind === "string" ? origin.kind : undefined;
+}
+
+function diagnosticToken(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/i.test(value)
+    ? value
+    : undefined;
+}
+
+export function sdkMessageDiagnosticFields(
+  msg: Record<string, unknown>,
+): Record<string, unknown> {
+  const event = asRecordOrNull(msg.event);
+  const delta = asRecordOrNull(event?.delta);
+  const uuidFields = Object.fromEntries(
+    Object.entries(msg).filter(
+      ([key, value]) =>
+        key.toLowerCase().includes("uuid") && typeof value === "string",
+    ),
+  );
+  const hasParentToolUseId = Object.hasOwn(msg, "parent_tool_use_id");
+  const parentToolUseId = trimmedStringField(msg, "parent_tool_use_id");
+
+  return {
+    sdk_type: typeof msg.type === "string" ? msg.type : undefined,
+    sdk_subtype: typeof msg.subtype === "string" ? msg.subtype : undefined,
+    sdk_uuid: trimmedStringField(msg, "uuid"),
+    user_message_uuid: trimmedStringField(msg, "user_message_uuid"),
+    ...(userMessageUuids(msg).length > 0
+      ? { user_message_uuids: userMessageUuids(msg) }
+      : {}),
+    parent_tool_use_id: parentToolUseId,
+    parent_tool_use_scope: !hasParentToolUseId
+      ? "absent"
+      : msg.parent_tool_use_id === null
+        ? "root"
+        : parentToolUseId
+          ? "child"
+          : "other",
+    request_id: trimmedStringField(msg, "request_id"),
+    origin_kind: sdkMessageOriginKind(msg),
+    inner_event_type: diagnosticToken(event?.type),
+    inner_delta_type: diagnosticToken(delta?.type),
+    lifecycle_status: diagnosticToken(msg.status),
+    lifecycle_state: diagnosticToken(msg.state),
+    lifecycle_operation: diagnosticToken(msg.operation),
+    lifecycle_reason: diagnosticToken(msg.reason),
+    ...(diagnosticToken(msg.resume_reason)
+      ? { resume_reason: diagnosticToken(msg.resume_reason) }
+      : {}),
+    ...(nonNegativeIntegerField(msg, "result_index") !== undefined
+      ? { result_index: nonNegativeIntegerField(msg, "result_index") }
+      : {}),
+    ...(boundedDiagnosticString(msg.local_command)
+      ? { local_command: boundedDiagnosticString(msg.local_command) }
+      : {}),
+    sdk_keys: Object.keys(msg).sort(),
+    ...(Object.keys(uuidFields).length > 0
+      ? { sdk_uuid_fields: uuidFields }
+      : {}),
+  };
+}
+
+function externalMessageUpdateFromSdkUser(
+  msg: Record<string, unknown>,
+): Extract<SessionUpdate, { type: "external_message_update" }> | undefined {
+  const origin = asRecordOrNull(msg.origin);
+  if (!origin) {
+    return undefined;
+  }
+  const kind = typeof origin?.kind === "string" ? origin.kind : undefined;
+  if (kind !== "peer" && kind !== "task-notification") {
+    return undefined;
+  }
+  const payload = asRecordOrNull(msg.message);
+  const content = payload?.content;
+  const contentText =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .flatMap((block) => {
+              const record = asRecordOrNull(block);
+              return record?.type === "text" && typeof record.text === "string"
+                ? [record.text]
+                : [];
+            })
+            .join("\n")
+        : "";
+  const text = typeof origin.body === "string" ? origin.body : contentText;
+  if (!text.trim()) {
+    return undefined;
+  }
+  return {
+    type: "external_message_update",
+    content: text,
+    ...(sourceMessageUuid(msg)
+      ? { source_message_uuid: sourceMessageUuid(msg) }
+      : {}),
+    origin: {
+      kind,
+      ...(typeof origin.subkind === "string"
+        ? { subkind: origin.subkind }
+        : {}),
+      ...(typeof origin.from === "string" ? { from: origin.from } : {}),
+      ...(typeof origin.name === "string" ? { name: origin.name } : {}),
+      ...(typeof origin.fromSession === "string"
+        ? { from_session: origin.fromSession }
+        : {}),
+      ...(typeof origin.senderTaskId === "string"
+        ? { sender_task_id: origin.senderTaskId }
+        : {}),
+      ...(typeof origin.verifiedPeerPid === "number" &&
+      Number.isSafeInteger(origin.verifiedPeerPid) &&
+      origin.verifiedPeerPid >= 0
+        ? { verified_peer_pid: origin.verifiedPeerPid }
+        : {}),
+      ...(origin.fromMode === "bypass" || origin.fromMode === "prompting"
+        ? { from_mode: origin.fromMode }
+        : {}),
+    },
+  };
+}
+
+function logSdkMessageOrigin(
+  session: SessionState,
+  msg: Record<string, unknown>,
+): void {
+  const origin = asRecordOrNull(msg.origin);
+  const originKind = sdkMessageOriginKind(msg);
+  if (!originKind) {
+    return;
+  }
+  bridgeLogger.debug({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName: "sdk_message_origin_observed",
+    message: "SDK message origin observed",
+    outcome: originKind === "auto-continuation" ? "accepted" : "observed",
+    sessionId: session.sessionId,
+    fields: {
+      message_type: typeof msg.type === "string" ? msg.type : undefined,
+      origin_kind: originKind,
+      origin_subkind:
+        typeof origin?.subkind === "string" ? origin.subkind : undefined,
+      origin_from_session:
+        typeof origin?.fromSession === "string"
+          ? origin.fromSession
+          : undefined,
+      origin_sender_task_id:
+        typeof origin?.senderTaskId === "string"
+          ? origin.senderTaskId
+          : undefined,
+      origin_verified_peer_pid:
+        typeof origin?.verifiedPeerPid === "number"
+          ? origin.verifiedPeerPid
+          : undefined,
+      origin_from_mode:
+        origin?.fromMode === "bypass" || origin?.fromMode === "prompting"
+          ? origin.fromMode
+          : undefined,
+    },
+  });
+}
+
+function emitSystemNoticeUpdate(
+  session: SessionState,
+  severity: SystemNoticeSeverity,
+  message: string,
+): void {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return;
+  }
+  emitSessionUpdate(session.sessionId, {
+    type: "system_notice_update",
+    severity,
+    message: trimmed,
+  });
+}
+
+const MAX_INFORMATIONAL_DEDUP_KEYS = 256;
+
+function shouldEmitInformationalMessage(
+  session: SessionState,
+  level: string,
+  content: string,
+  toolUseId: string,
+): boolean {
+  if (!toolUseId) {
+    return true;
+  }
+  const key = `${toolUseId}\u0000${level}\u0000${content}`;
+  if (session.informationalDedupKeys.has(key)) {
+    return false;
+  }
+  session.informationalDedupKeys.add(key);
+  while (session.informationalDedupKeys.size > MAX_INFORMATIONAL_DEDUP_KEYS) {
+    const first = session.informationalDedupKeys.values().next().value;
+    if (typeof first !== "string") {
+      break;
+    }
+    session.informationalDedupKeys.delete(first);
+  }
+  return true;
+}
+
+function handleInformationalSystemMessage(
+  session: SessionState,
+  msg: Record<string, unknown>,
+): void {
+  const content = typeof msg.content === "string" ? msg.content.trim() : "";
+  if (!content) {
+    return;
+  }
+  const level = typeof msg.level === "string" ? msg.level : "info";
+  const toolUseId = typeof msg.tool_use_id === "string" ? msg.tool_use_id : "";
+  if (!shouldEmitInformationalMessage(session, level, content, toolUseId)) {
+    return;
+  }
+
+  switch (level) {
+    case "notice":
+      emitSystemNoticeUpdate(session, "info", content);
+      return;
+    case "suggestion":
+      emitSystemNoticeUpdate(session, "info", `Suggestion: ${content}`);
+      return;
+    case "warning":
+      emitSystemNoticeUpdate(session, "warning", content);
+      return;
+    case "info":
+      if (msg.prevent_continuation === true) {
+        emitSystemNoticeUpdate(session, "warning", content);
+      }
+      return;
+    default:
+      bridgeLogger.debug({
+        target: LOG_TARGETS.BRIDGE_SDK,
+        eventName: "sdk_informational_level_unhandled",
+        message: "SDK informational message ignored for unknown level",
+        outcome: "ignored",
+        sessionId: session.sessionId,
+        toolCallId: toolUseId || undefined,
+        fields: {
+          informational_level: level,
+        },
+      });
+  }
+}
+
+function trimmedStringField(
+  msg: Record<string, unknown>,
+  field: string,
+): string | undefined {
+  const value = msg[field];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function boundedDiagnosticString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 1_024) : undefined;
+}
+
+function emitPluginLoadErrors(session: SessionState, value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  const errors = value.slice(0, 20);
+  for (const entry of errors) {
+    const error = asRecordOrNull(entry);
+    const plugin = boundedDiagnosticString(error?.plugin) ?? "unknown plugin";
+    const category = boundedDiagnosticString(error?.type) ?? "generic-error";
+    const message = boundedDiagnosticString(error?.message) ?? "Unknown plugin load failure";
+    const path = boundedDiagnosticString(error?.path);
+    emitSystemNoticeUpdate(
+      session,
+      "warning",
+      `Plugin ${plugin} failed to load (${category})${path ? ` at ${path}` : ""}: ${message}`,
+    );
+  }
+  if (value.length > errors.length) {
+    emitSystemNoticeUpdate(
+      session,
+      "warning",
+      `${value.length - errors.length} additional plugin load failure(s) were omitted.`,
+    );
+  }
+}
+
+function ensureSentencePunctuation(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function modelRefusalNoFallbackMessage(msg: Record<string, unknown>): string {
+  const model =
+    trimmedStringField(msg, "original_model") ?? "the selected model";
+  const base = `Could not continue with ${model}: model refused the request and no fallback model is configured.`;
+  const explanation = trimmedStringField(msg, "api_refusal_explanation");
+  const category = trimmedStringField(msg, "api_refusal_category");
+  const content = trimmedStringField(msg, "content");
+  const detail = explanation
+    ? `Reason: ${explanation}`
+    : category
+      ? `Refusal category: ${category}`
+      : content;
+  const detailSentence = detail ? ensureSentencePunctuation(detail) : "";
+  return detailSentence ? `${base} ${detailSentence}` : base;
+}
+
+function handleModelRefusalNoFallbackMessage(
+  session: SessionState,
+  msg: Record<string, unknown>,
+): void {
+  const message = modelRefusalNoFallbackMessage(msg);
+  emitSystemNoticeUpdate(session, "warning", message);
+  bridgeLogger.info({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName: "sdk_model_refusal_no_fallback_received",
+    message: "SDK model refusal without fallback received",
+    outcome: "success",
+    sessionId: session.sessionId,
+    requestId: trimmedStringField(msg, "request_id"),
+    fields: {
+      original_model: trimmedStringField(msg, "original_model"),
+      api_refusal_category: trimmedStringField(msg, "api_refusal_category"),
+      refused_user_message_uuid: trimmedStringField(
+        msg,
+        "refused_user_message_uuid",
+      ),
+      sdk_message_uuid: trimmedStringField(msg, "uuid"),
+      sdk_message_session_id: trimmedStringField(msg, "session_id"),
+      has_api_refusal_explanation:
+        trimmedStringField(msg, "api_refusal_explanation") !== undefined,
+      has_content: trimmedStringField(msg, "content") !== undefined,
+    },
+  });
+}
+
+function workerShutdownMessage(reason: string): string {
+  const trimmed = reason.trim();
+  return trimmed
+    ? `Claude worker is shutting down: ${trimmed}`
+    : "Claude worker is shutting down.";
+}
+
+function handleWorkerShuttingDownSystemMessage(
+  session: SessionState,
+  msg: Record<string, unknown>,
+): void {
+  const reason = typeof msg.reason === "string" ? msg.reason.trim() : "";
+  if (!session.connected) {
+    bridgeLogger.debug({
+      target: LOG_TARGETS.BRIDGE_SDK,
+      eventName: "sdk_worker_shutdown_preconnect_ignored",
+      message: "SDK worker shutdown ignored before session connect",
+      outcome: "ignored",
+      sessionId: session.sessionId,
+      fields: {
+        reason: reason || undefined,
+      },
+    });
+    return;
+  }
+  session.pendingWorkerShutdown = { reason };
+}
+
+function cancelPendingWorkerShutdown(session: SessionState): void {
+  if (!session.pendingWorkerShutdown) {
+    return;
+  }
+  bridgeLogger.debug({
+    target: LOG_TARGETS.BRIDGE_SDK,
+    eventName: "sdk_worker_shutdown_cancelled",
+    message: "SDK worker shutdown ignored after later stream activity",
+    outcome: "ignored",
+    sessionId: session.sessionId,
+    fields: {
+      reason: session.pendingWorkerShutdown.reason || undefined,
+    },
+  });
+  session.pendingWorkerShutdown = undefined;
+}
+
+export function flushPendingWorkerShutdown(session: SessionState): void {
+  const pending = session.pendingWorkerShutdown;
+  if (!pending) {
+    return;
+  }
+  session.pendingWorkerShutdown = undefined;
+  if (!session.connected) {
+    return;
+  }
+  emitSystemNoticeUpdate(
+    session,
+    "warning",
+    workerShutdownMessage(pending.reason),
+  );
+}
+
+function notificationSeverity(priority: unknown): SystemNoticeSeverity {
+  return priority === "high" || priority === "immediate" ? "warning" : "info";
+}
+
+function isTerminalToolStatus(status: ToolCallUpdateFields["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "killed";
+}
+
+/** Fast check that a string looks like valid base64 (non-empty, correct charset & padding). */
+function isValidBase64(data: string): boolean {
+  if (!data) return false;
+  const clean = data.replace(/\s/g, "");
+  if (clean.length % 4 !== 0) return false;
+  // Padding ('=') must only appear at the end and be at most 2 characters.
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(clean);
+}
+
+/**
+ * Build a content array from prompt chunks, supporting both text and image blocks.
+ * Returns the Anthropic API content block format expected by MessageParam.
+ */
+export function contentFromPrompt(
+  command: Extract<BridgeCommand, { command: "prompt" }>,
+): PromptContentBlock[] {
+  const chunks = command.chunks ?? [];
+  const content: PromptContentBlock[] = [];
+
+  for (const chunk of chunks) {
+    if (chunk.kind === "text") {
+      const text = typeof chunk.value === "string" ? chunk.value : "";
+      if (text.trim()) {
+        content.push({ type: "text", text });
+      }
+    } else if (chunk.kind === "image") {
+      const val =
+        chunk.value && typeof chunk.value === "object"
+          ? (chunk.value as Record<string, unknown>)
+          : null;
+      if (!val) continue;
+      const data = typeof val.data === "string" ? val.data : "";
+      const mimeType =
+        typeof val.mime_type === "string" ? val.mime_type : "image/png";
+      if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
+        bridgeLogger.warn({
+          target: LOG_TARGETS.BRIDGE_PROTOCOL,
+          eventName: "prompt_image_skipped",
+          message: "skipping unsupported prompt image type",
+          outcome: "skipped",
+          fields: { mime_type: mimeType },
+        });
+        continue;
+      }
+      if (!isValidBase64(data)) {
+        bridgeLogger.warn({
+          target: LOG_TARGETS.BRIDGE_PROTOCOL,
+          eventName: "prompt_image_skipped",
+          message: "skipping prompt image with invalid base64 data",
+          outcome: "skipped",
+          fields: { mime_type: mimeType, reason: "invalid_base64" },
+        });
+        continue;
+      }
+      const supportedMimeType = mimeType as SupportedImageMimeType;
+      content.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: supportedMimeType,
+          data,
+        },
+      });
+    }
+  }
+
+  return content;
+}
+
+export function handleTaskSystemMessage(
+  session: SessionState,
+  subtype: string,
+  msg: Record<string, unknown>,
+): boolean {
+  if (
+    subtype !== "task_started" &&
+    subtype !== "task_progress" &&
+    subtype !== "task_updated" &&
+    subtype !== "task_notification"
+  ) {
+    return false;
+  }
+
+  const taskId = typeof msg.task_id === "string" ? msg.task_id : "";
+  const explicitToolUseId =
+    typeof msg.tool_use_id === "string" ? msg.tool_use_id : "";
+  const messageTaskMetadata = sdkTaskMetadata(msg);
+  if (taskId && explicitToolUseId) {
+    linkTaskToolUse(session, taskId, explicitToolUseId);
+  }
+  const toolUseId = resolveTaskToolUseId(session, msg);
+  bridgeLogger.debug({
+    target: LOG_TARGETS.APP_TOOL,
+    eventName: "sdk_task_linkage_observed",
+    message: "SDK task lifecycle linkage observed",
+    outcome: toolUseId ? "resolved" : "unresolved",
+    sessionId: session.sessionId,
+    toolCallId: toolUseId || explicitToolUseId || undefined,
+    fields: {
+      sdk_subtype: subtype,
+      task_id: taskId || undefined,
+      explicit_tool_use_id: explicitToolUseId || undefined,
+      resolved_tool_use_id: toolUseId || undefined,
+      task_status: typeof msg.status === "string" ? msg.status : undefined,
+      has_description:
+        typeof msg.description === "string" && msg.description.length > 0,
+      has_summary: typeof msg.summary === "string" && msg.summary.length > 0,
+      last_tool_name:
+        typeof msg.last_tool_name === "string" ? msg.last_tool_name : undefined,
+    },
+  });
+  if (subtype === "task_updated") {
+    bridgeLogger.debug({
+      target: LOG_TARGETS.APP_TOOL,
+      eventName: "task_updated_received",
+      message: "task update received",
+      outcome: toolUseId ? "resolved" : "unresolved",
+      sessionId: session.sessionId,
+      toolCallId: toolUseId || undefined,
+      fields: {
+        task_id: taskId,
+        explicit_tool_use_id: explicitToolUseId || undefined,
+        patch_keys:
+          msg.patch && typeof msg.patch === "object"
+            ? Object.keys(msg.patch as Record<string, unknown>).sort()
+            : undefined,
+      },
+    });
+  }
+  if (!toolUseId) {
+    applyTaskLifecycleState(session, subtype, msg);
+    if (subtype === "task_updated" && taskId) {
+      bridgeLogger.debug({
+        target: LOG_TARGETS.APP_TOOL,
+        eventName: "task_updated_unlinked",
+        message: "task update skipped because no visible tool call was linked",
+        outcome: "skipped",
+        sessionId: session.sessionId,
+        fields: { task_id: taskId, subtype },
+      });
+    }
+    return true;
+  }
+
+  const toolCall = ensureToolCallVisible(session, toolUseId, "Agent", {});
+  const acceptsLifecycle = toolAcceptsTaskLifecycle(toolCall);
+  const acceptsTerminalNotification =
+    subtype === "task_notification" &&
+    toolAcceptsTerminalTaskNotification(toolCall);
+  if (!acceptsLifecycle && !acceptsTerminalNotification) {
+    if (taskId) {
+      unlinkTaskToolUse(session, taskId);
+    }
+    return true;
+  }
+  applyTaskLifecycleState(session, subtype, msg);
+  if (toolCall.status === "pending") {
+    emitToolCallUpdate(
+      session,
+      toolUseId,
+      { status: "in_progress" },
+      "progress",
+    );
+  }
+
+  if (subtype === "task_started") {
+    const description =
+      typeof msg.description === "string" ? msg.description : "";
+    if (!description) {
+      return true;
+    }
+    const fields: ToolCallUpdateFields = {
+      status: "in_progress",
+      raw_output: description,
+      content: [
+        { type: "content", content: { type: "text", text: description } },
+      ],
+      ...(messageTaskMetadata ? { task_metadata: messageTaskMetadata } : {}),
+    };
+    emitToolCallUpdate(session, toolUseId, fields, "task_started");
+    return true;
+  }
+
+  if (subtype === "task_progress") {
+    const progress = taskProgressText(msg);
+    if (!progress) {
+      return true;
+    }
+    const fields: ToolCallUpdateFields = {
+      status: "in_progress",
+      raw_output: progress,
+      content: [{ type: "content", content: { type: "text", text: progress } }],
+      ...(messageTaskMetadata ? { task_metadata: messageTaskMetadata } : {}),
+    };
+    emitToolCallUpdate(session, toolUseId, fields, "task_progress");
+    return true;
+  }
+
+  if (subtype === "task_updated") {
+    const fields = taskUpdatedFields(msg);
+    if (messageTaskMetadata) {
+      fields.task_metadata = {
+        ...(fields.task_metadata ?? {}),
+        ...messageTaskMetadata,
+      };
+    }
+    if (Object.keys(fields).length === 0) {
+      return true;
+    }
+    bridgeLogger.debug({
+      target: LOG_TARGETS.APP_TOOL,
+      eventName: "task_updated_emitted",
+      message: "task update mapped to tool call update",
+      outcome: "success",
+      sessionId: session.sessionId,
+      toolCallId: toolUseId,
+      fields: {
+        task_id: taskId,
+        mapped_status: fields.status,
+        has_description: fields.content !== undefined,
+        has_error: Boolean(fields.task_metadata?.error),
+        is_backgrounded: fields.task_metadata?.is_backgrounded,
+      },
+    });
+    emitToolCallUpdate(session, toolUseId, fields, "task_updated");
+    if (taskId && isTerminalToolStatus(fields.status)) {
+      unlinkTaskToolUse(session, taskId);
+    }
+    return true;
+  }
+
+  const status = typeof msg.status === "string" ? msg.status : "";
+  const summary = typeof msg.summary === "string" ? msg.summary : "";
+  const finalStatus =
+    status === "completed"
+      ? "completed"
+      : status === "stopped"
+        ? "killed"
+        : "failed";
+  const deferCompletion =
+    finalStatus === "completed" && defersTaskNotificationCompletion(toolCall);
+  const fields: ToolCallUpdateFields = deferCompletion
+    ? {}
+    : { status: finalStatus };
+  if (messageTaskMetadata) {
+    fields.task_metadata = messageTaskMetadata;
+  }
+  if (summary && !toolPreservesTaskNotificationOutput(toolCall)) {
+    fields.raw_output = summary;
+    fields.content = [
+      { type: "content", content: { type: "text", text: summary } },
+    ];
+  }
+  const contentWithResourceLinks = appendResourceLinks(
+    fields.content,
+    msg.resource_links,
+  );
+  if (contentWithResourceLinks !== undefined) {
+    fields.content = contentWithResourceLinks;
+  }
+  if (Object.keys(fields).length > 0) {
+    emitToolCallUpdate(session, toolUseId, fields, "task_notification");
+  }
+  if (taskId && !deferCompletion) {
+    unlinkTaskToolUse(session, taskId);
+  }
+  return true;
+}
+
+type ContentBlockLinkage = {
+  source: "assistant" | "stream_event" | "user";
+  parentToolUseId?: string;
+  metadata?: ToolCorrelationMetadata;
+  sourceMessageUuid?: string;
+};
+
+function stringField(
+  msg: Record<string, unknown>,
+  field: string,
+): string | undefined {
+  const value = msg[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function nullableStringField(
+  msg: Record<string, unknown>,
+  field: string,
+): string | undefined {
+  const value = msg[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function sourceMessageUuid(msg: Record<string, unknown>): string | undefined {
+  return stringField(msg, "uuid");
+}
+
+function dedupeMessageUuids(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const uuids: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || !entry) {
+      continue;
+    }
+    if (seen.has(entry)) {
+      continue;
+    }
+    seen.add(entry);
+    uuids.push(entry);
+  }
+  return uuids;
+}
+
+function emitTranscriptRetraction(
+  session: SessionState,
+  messageUuids: string[],
+  reason: TranscriptRetractionReason,
+  metadata: Record<string, string | undefined> = {},
+): boolean {
+  const deduped = dedupeMessageUuids(messageUuids);
+  if (deduped.length === 0) {
+    return false;
+  }
+  emitSessionUpdate(session.sessionId, {
+    type: "transcript_retraction",
+    message_uuids: deduped,
+    reason,
+    ...(metadata.requestId ? { request_id: metadata.requestId } : {}),
+    ...(metadata.trigger ? { trigger: metadata.trigger } : {}),
+    ...(metadata.direction ? { direction: metadata.direction } : {}),
+    ...(metadata.originalModel
+      ? { original_model: metadata.originalModel }
+      : {}),
+    ...(metadata.fallbackModel
+      ? { fallback_model: metadata.fallbackModel }
+      : {}),
+    ...(metadata.scope ? { scope: metadata.scope } : {}),
+    ...(metadata.apiRefusalCategory
+      ? { api_refusal_category: metadata.apiRefusalCategory }
+      : {}),
+    ...(metadata.apiRefusalExplanation
+      ? { api_refusal_explanation: metadata.apiRefusalExplanation }
+      : {}),
+    ...(metadata.content ? { content: metadata.content } : {}),
+  });
+  return true;
+}
+
+function handleFallbackRetractionMessage(
+  session: SessionState,
+  subtype: string,
+  msg: Record<string, unknown>,
+): boolean {
+  if (subtype !== "model_refusal_fallback" && subtype !== "model_fallback") {
+    return false;
+  }
+  const reason: TranscriptRetractionReason =
+    subtype === "model_fallback" ? "model_fallback" : "model_refusal_fallback";
+  const messageUuids = dedupeMessageUuids(msg.retracted_message_uuids);
+  const metadata = {
+    requestId: nullableStringField(msg, "request_id"),
+    trigger: stringField(msg, "trigger"),
+    direction: stringField(msg, "direction"),
+    originalModel: stringField(msg, "original_model"),
+    fallbackModel: stringField(msg, "fallback_model"),
+    scope: stringField(msg, "scope") ?? "session",
+    apiRefusalCategory: nullableStringField(msg, "api_refusal_category"),
+    apiRefusalExplanation: nullableStringField(msg, "api_refusal_explanation"),
+    content: stringField(msg, "content"),
+  };
+  const emitted = emitTranscriptRetraction(
+    session,
+    messageUuids,
+    reason,
+    metadata,
+  );
+  bridgeLogger.info({
+    target: LOG_TARGETS.APP_SESSION,
+    eventName: "sdk_model_fallback_received",
+    message: "SDK model fallback retraction received",
+    outcome: emitted ? "success" : "observed",
+    sessionId: session.sessionId,
+    requestId: metadata.requestId,
+    count: messageUuids.length,
+    fields: {
+      sdk_subtype: subtype,
+      trigger: metadata.trigger,
+      direction: metadata.direction,
+      original_model: metadata.originalModel,
+      fallback_model: metadata.fallbackModel,
+      scope: metadata.scope,
+      api_refusal_category: metadata.apiRefusalCategory,
+      has_api_refusal_explanation: metadata.apiRefusalExplanation !== undefined,
+      has_content: metadata.content !== undefined,
+    },
+  });
+  return true;
+}
+
+function logContentBlockLinkage(
+  session: SessionState,
+  blockType: string,
+  toolUseId: string,
+  toolName: string | undefined,
+  linkage: ContentBlockLinkage | undefined,
+): void {
+  if (!toolUseId && !linkage?.parentToolUseId) {
+    return;
+  }
+  bridgeLogger.debug({
+    target: LOG_TARGETS.APP_TOOL,
+    eventName: "sdk_tool_linkage_observed",
+    message: "SDK tool linkage observed",
+    outcome: linkage?.parentToolUseId ? "child" : "root_or_unknown",
+    sessionId: session.sessionId,
+    toolCallId: toolUseId || undefined,
+    fields: {
+      source: linkage?.source,
+      block_type: blockType || undefined,
+      tool_name: toolName,
+      tool_use_id: toolUseId || undefined,
+      parent_tool_use_id: linkage?.parentToolUseId,
+    },
+  });
+}
+
+type ToolProgressCorrelationSource = "task" | "tool" | "parent";
+
+function resolveToolProgressTarget(
+  session: SessionState,
+  taskToolUseId: string,
+  toolUseId: string,
+  parentToolUseId: string,
+): { toolUseId: string; source: ToolProgressCorrelationSource } | null {
+  if (taskToolUseId && session.toolCalls.has(taskToolUseId)) {
+    return { toolUseId: taskToolUseId, source: "task" };
+  }
+  if (toolUseId && session.toolCalls.has(toolUseId)) {
+    return { toolUseId, source: "tool" };
+  }
+  if (parentToolUseId && session.toolCalls.has(parentToolUseId)) {
+    return { toolUseId: parentToolUseId, source: "parent" };
+  }
+  return null;
+}
+
+function hideToolUse(session: SessionState, toolUseId: string): void {
+  if (toolUseId) {
+    session.hiddenToolUseIds.add(toolUseId);
+  }
+}
+
+function isHiddenToolUse(
+  session: SessionState,
+  toolUseId: string,
+  toolName: string,
+): boolean {
+  if (!toolUseId) {
+    return false;
+  }
+  if (isToolSearchToolName(toolName)) {
+    hideToolUse(session, toolUseId);
+    return true;
+  }
+  return session.hiddenToolUseIds.has(toolUseId);
+}
+
+function isHiddenToolResult(
+  session: SessionState,
+  toolUseId: string,
+  blockType: string,
+): boolean {
+  if (!toolUseId) {
+    return false;
+  }
+  if (isToolSearchToolResultType(blockType)) {
+    hideToolUse(session, toolUseId);
+    return true;
+  }
+  return session.hiddenToolUseIds.has(toolUseId);
+}
+
+export function handleContentBlock(
+  session: SessionState,
+  block: Record<string, unknown>,
+  linkage?: ContentBlockLinkage,
+): void {
+  const blockType = typeof block.type === "string" ? block.type : "";
+
+  if (blockType === "text") {
+    const text = typeof block.text === "string" ? block.text : "";
+    if (text) {
+      emitSessionUpdate(session.sessionId, {
+        type: "agent_message_chunk",
+        content: { type: "text", text },
+        ...(linkage?.sourceMessageUuid
+          ? { source_message_uuid: linkage.sourceMessageUuid }
+          : {}),
+      });
+    }
+    return;
+  }
+
+  if (blockType === "thinking") {
+    const text = typeof block.thinking === "string" ? block.thinking : "";
+    if (text) {
+      emitSessionUpdate(session.sessionId, {
+        type: "agent_thought_chunk",
+        content: { type: "text", text },
+        ...(linkage?.sourceMessageUuid
+          ? { source_message_uuid: linkage.sourceMessageUuid }
+          : {}),
+      });
+    }
+    return;
+  }
+
+  if (
+    blockType === "tool_use" ||
+    blockType === "server_tool_use" ||
+    blockType === "mcp_tool_use"
+  ) {
+    const toolUseId = typeof block.id === "string" ? block.id : "";
+    const name = typeof block.name === "string" ? block.name : "Tool";
+    const input =
+      block.input && typeof block.input === "object"
+        ? (block.input as Record<string, unknown>)
+        : {};
+    if (!toolUseId) {
+      return;
+    }
+    if (isHiddenToolUse(session, toolUseId, name)) {
+      return;
+    }
+    logContentBlockLinkage(session, blockType, toolUseId, name, linkage);
+    emitToolCall(
+      session,
+      toolUseId,
+      name,
+      input,
+      linkage?.parentToolUseId ?? null,
+      linkage?.metadata,
+      linkage?.sourceMessageUuid,
+    );
+    return;
+  }
+
+  if (TOOL_RESULT_TYPES.has(blockType)) {
+    const toolUseId =
+      typeof block.tool_use_id === "string" ? block.tool_use_id : "";
+    if (!toolUseId) {
+      return;
+    }
+    if (isHiddenToolResult(session, toolUseId, blockType)) {
+      return;
+    }
+    logContentBlockLinkage(session, blockType, toolUseId, undefined, linkage);
+    const isError = Boolean(block.is_error);
+    emitToolResultUpdate(
+      session,
+      toolUseId,
+      isError,
+      block.content,
+      block,
+      linkage?.sourceMessageUuid,
+    );
+  }
+}
+
+export function handleStreamEvent(
+  session: SessionState,
+  event: Record<string, unknown>,
+  parentToolUseId?: string,
+  sourceMessageUuid?: string,
+): void {
+  const eventType = typeof event.type === "string" ? event.type : "";
+
+  if (eventType === "content_block_start") {
+    if (event.content_block && typeof event.content_block === "object") {
+      handleContentBlock(
+        session,
+        event.content_block as Record<string, unknown>,
+        {
+          source: "stream_event",
+          parentToolUseId,
+          sourceMessageUuid,
+        },
+      );
+    }
+    return;
+  }
+
+  if (eventType === "content_block_delta") {
+    if (!event.delta || typeof event.delta !== "object") {
+      return;
+    }
+    const delta = event.delta as Record<string, unknown>;
+    const deltaType = typeof delta.type === "string" ? delta.type : "";
+    if (deltaType === "text_delta") {
+      const text = typeof delta.text === "string" ? delta.text : "";
+      if (text) {
+        emitSessionUpdate(session.sessionId, {
+          type: "agent_message_chunk",
+          content: { type: "text", text },
+          ...(sourceMessageUuid
+            ? { source_message_uuid: sourceMessageUuid }
+            : {}),
+        });
+      }
+    } else if (deltaType === "thinking_delta") {
+      const text = typeof delta.thinking === "string" ? delta.thinking : "";
+      if (text) {
+        emitSessionUpdate(session.sessionId, {
+          type: "agent_thought_chunk",
+          content: { type: "text", text },
+          ...(sourceMessageUuid
+            ? { source_message_uuid: sourceMessageUuid }
+            : {}),
+        });
+      }
+    }
+  }
+}
+
+export function handleAssistantMessage(
+  session: SessionState,
+  message: Record<string, unknown>,
+): void {
+  const assistantMessageUuid = sourceMessageUuid(message);
+  emitTranscriptRetraction(
+    session,
+    dedupeMessageUuids(message.supersedes),
+    "assistant_supersedes",
+  );
+  const assistantError = typeof message.error === "string" ? message.error : "";
+  if (assistantError.length > 0) {
+    session.lastAssistantError = parseApiRetryError(assistantError);
+  }
+  const metadata = sdkCorrelationMetadata(message);
+
+  const messageObject =
+    message.message && typeof message.message === "object"
+      ? (message.message as Record<string, unknown>)
+      : null;
+  if (!messageObject) {
+    return;
+  }
+  const content = Array.isArray(messageObject.content)
+    ? messageObject.content
+    : [];
+  if (asRecordOrNull(message.context_usage)) {
+    const markdown = content
+      .flatMap((block) => {
+        const record = asRecordOrNull(block);
+        return record?.type === "text" &&
+          typeof record.text === "string" &&
+          record.text.trim().length > 0
+          ? [record.text]
+          : [];
+      })
+      .join("\n\n");
+    if (markdown.length > 0) {
+      emitSessionUpdate(session.sessionId, {
+        type: "agent_message_chunk",
+        content: { type: "text", text: markdown },
+        ...(assistantMessageUuid
+          ? { source_message_uuid: assistantMessageUuid }
+          : {}),
+      });
+    }
+  }
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const blockRecord = block as Record<string, unknown>;
+    const blockType =
+      typeof blockRecord.type === "string" ? blockRecord.type : "";
+    if (
+      blockType === "tool_use" ||
+      blockType === "server_tool_use" ||
+      blockType === "mcp_tool_use" ||
+      TOOL_RESULT_TYPES.has(blockType)
+    ) {
+      const parentToolUseId =
+        typeof message.parent_tool_use_id === "string"
+          ? message.parent_tool_use_id
+          : undefined;
+      handleContentBlock(session, blockRecord, {
+        source: "assistant",
+        parentToolUseId,
+        metadata,
+        sourceMessageUuid: assistantMessageUuid,
+      });
+    }
+  }
+}
+
+function emitUserMessageStarted(
+  session: SessionState,
+  message: Record<string, unknown>,
+  source: "stream_event" | "assistant" | "result",
+): void {
+  for (const messageUuid of userMessageUuids(message)) {
+    emitUserMessageStartedForUuid(session, messageUuid, source);
+  }
+}
+
+const MAX_USER_MESSAGE_UUIDS = 64;
+
+export function userMessageUuids(message: Record<string, unknown>): string[] {
+  const uuids: string[] = [];
+  const seen = new Set<string>();
+  const rawUuids = message.user_message_uuids;
+  if (Array.isArray(rawUuids)) {
+    for (const value of rawUuids) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const uuid = value.trim();
+      if (!uuid || seen.has(uuid)) {
+        continue;
+      }
+      seen.add(uuid);
+      uuids.push(uuid);
+      if (uuids.length >= MAX_USER_MESSAGE_UUIDS) {
+        break;
+      }
+    }
+  }
+  if (uuids.length === 0) {
+    const fallback = trimmedStringField(message, "user_message_uuid");
+    if (fallback) {
+      uuids.push(fallback);
+    }
+  }
+  return uuids;
+}
+
+function reconcileResultPermissionDenials(
+  session: SessionState,
+  message: Record<string, unknown>,
+): void {
+  const denials = Array.isArray(message.permission_denials)
+    ? message.permission_denials.slice(0, 256)
+    : [];
+  const seen = new Set<string>();
+  let reconciled = 0;
+  for (const value of denials) {
+    const denial = asRecordOrNull(value);
+    const toolUseId = denial
+      ? trimmedStringField(denial, "tool_use_id")
+      : undefined;
+    if (!toolUseId || seen.has(toolUseId)) {
+      continue;
+    }
+    seen.add(toolUseId);
+    const toolCall = session.toolCalls.get(toolUseId);
+    if (
+      !toolCall ||
+      toolCall.status === "completed" ||
+      toolCall.status === "failed" ||
+      toolCall.status === "killed"
+    ) {
+      continue;
+    }
+    emitToolCallUpdate(session, toolUseId, { status: "failed" }, "finalize");
+    reconciled += 1;
+  }
+  if (denials.length > 0) {
+    bridgeLogger.info({
+      target: LOG_TARGETS.BRIDGE_PERMISSION,
+      eventName: "sdk_result_permission_denials_reconciled",
+      message: "SDK result permission denials reconciled with open tool calls",
+      outcome: "handled",
+      sessionId: session.sessionId,
+      count: reconciled,
+      fields: { denial_count: denials.length },
+    });
+  }
+}
+
+function emitUserMessageStartedForUuid(
+  session: SessionState,
+  messageUuid: string,
+  source: "command_lifecycle" | "stream_event" | "assistant" | "result",
+): void {
+  writeEvent({
+    event: "user_message_started",
+    session_id: session.sessionId,
+    message_uuid: messageUuid,
+    source,
+  });
+}
+
+function handleCommandLifecycleMessage(
+  session: SessionState,
+  message: Record<string, unknown>,
+): void {
+  const state = trimmedStringField(message, "state");
+  const commandUuid = trimmedStringField(message, "command_uuid");
+  if (state !== "started") {
+    return;
+  }
+  if (!commandUuid) {
+    bridgeLogger.warn({
+      target: LOG_TARGETS.BRIDGE_SDK,
+      eventName: "sdk_command_lifecycle_start_invalid",
+      message: "SDK command lifecycle start omitted its command UUID",
+      outcome: "ignored",
+      sessionId: session.sessionId,
+      fields: sdkMessageDiagnosticFields(message),
+    });
+    return;
+  }
+  emitUserMessageStartedForUuid(session, commandUuid, "command_lifecycle");
+}
+
+function messageToolUseResult(message: Record<string, unknown>): unknown {
+  if (Object.hasOwn(message, "toolUseResult")) {
+    return message.toolUseResult;
+  }
+  if (Object.hasOwn(message, "tool_use_result")) {
+    return message.tool_use_result;
+  }
+  return undefined;
+}
+
+export function handleUserToolResultBlocks(
+  session: SessionState,
+  message: Record<string, unknown>,
+): boolean {
+  const messageObject =
+    message.message && typeof message.message === "object"
+      ? (message.message as Record<string, unknown>)
+      : null;
+  if (!messageObject) {
+    return false;
+  }
+  const content = Array.isArray(messageObject.content)
+    ? messageObject.content
+    : [];
+  const nonExecutionByToolUseId = parseToolNonExecutionMetadata(
+    message.tool_result_meta,
+  );
+  let handled = false;
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const blockRecord = block as Record<string, unknown>;
+    const blockType =
+      typeof blockRecord.type === "string" ? blockRecord.type : "";
+    if (TOOL_RESULT_TYPES.has(blockType)) {
+      const parentToolUseId =
+        typeof message.parent_tool_use_id === "string"
+          ? message.parent_tool_use_id
+          : undefined;
+      const toolUseId =
+        typeof blockRecord.tool_use_id === "string"
+          ? blockRecord.tool_use_id
+          : "";
+      if (!toolUseId) {
+        continue;
+      }
+      handled = true;
+      if (isHiddenToolResult(session, toolUseId, blockType)) {
+        continue;
+      }
+      logContentBlockLinkage(session, blockType, toolUseId, undefined, {
+        source: "user",
+        parentToolUseId,
+        sourceMessageUuid: sourceMessageUuid(message),
+      });
+      emitToolResultUpdate(
+        session,
+        toolUseId,
+        Boolean(blockRecord.is_error),
+        blockRecord.content,
+        messageToolUseResult(message) ?? blockRecord,
+        sourceMessageUuid(message),
+        nonExecutionByToolUseId.get(toolUseId),
+      );
+    }
+  }
+  return handled;
+}
+
+export function handleResultMessage(
+  session: SessionState,
+  message: Record<string, unknown>,
+): void {
+  if (session.startupFailure) {
+    return;
+  }
+  if (
+    message.type === "result" &&
+    message.subtype === "error_during_execution" &&
+    typeof message.startup_failure_reason === "string" &&
+    message.startup_failure_reason.length > 0
+  ) {
+    const failure = {
+      reason: message.startup_failure_reason,
+      errors: startupFailureDetails(message.errors),
+    };
+    session.startupFailure = failure;
+    session.initializationReady = false;
+    session.initializationError = "Claude Code startup failed.";
+    session.lastAssistantError = undefined;
+    bridgeLogger.error({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "sdk_startup_failed",
+      message: "Claude Code startup failed",
+      outcome: "failure",
+      sessionId: session.sessionId,
+      requestId: session.connectRequestId,
+      fields: {
+        startup_failure_reason: redactStartupDetail(failure.reason).slice(0, 1_024),
+        startup_failure_errors: failure.errors,
+        errors_valid: Array.isArray(message.errors) && message.errors.every((entry) => typeof entry === "string"),
+      },
+    });
+    writeEvent({
+      event: "connection_failed",
+      message: session.initializationError,
+      startup_failure: failure,
+    }, session.connectRequestId);
+    session.connectRequestId = undefined;
+    return;
+  }
+  if (
+    message.parent_tool_use_id === null ||
+    message.parent_tool_use_id === undefined
+  ) {
+    emitUserMessageStarted(session, message, "result");
+  }
+  emitFastModeUpdateIfChanged(
+    session,
+    message.fast_mode_state,
+    message.fast_mode_disabled_reason,
+  );
+  reconcileResultPermissionDenials(session, message);
+  const replyDiagnostics = sdkMessageDiagnosticFields(message);
+  if (
+    replyDiagnostics.resume_reason !== undefined ||
+    replyDiagnostics.result_index !== undefined ||
+    replyDiagnostics.local_command !== undefined
+  ) {
+    bridgeLogger.debug({
+      target: LOG_TARGETS.BRIDGE_SDK,
+      eventName: "sdk_result_diagnostics",
+      message: "SDK result diagnostic metadata received",
+      outcome: "observed",
+      sessionId: session.sessionId,
+      fields: replyDiagnostics,
+    });
+  }
+  const terminalReason = terminalReasonFromValue(message.terminal_reason);
+  const queuedTurnCount = nonNegativeIntegerField(message, "queued_turn_count");
+
+  const subtype = typeof message.subtype === "string" ? message.subtype : "";
+  if (subtype === "success") {
+    session.lastAssistantError = undefined;
+    finalizeOpenToolCalls(session, "completed");
+    writeEvent({
+      event: "turn_complete",
+      session_id: session.sessionId,
+      ...(queuedTurnCount !== undefined
+        ? { queued_turn_count: queuedTurnCount }
+        : {}),
+      ...(terminalReason ? { terminal_reason: terminalReason } : {}),
+    });
+    return;
+  }
+
+  const errors =
+    Array.isArray(message.errors) &&
+    message.errors.every((entry) => typeof entry === "string")
+      ? (message.errors as string[])
+      : [];
+  const resumeDropsTurnRefusal = errors.find((entry) =>
+    entry.startsWith("Resume rejected by --resume-drops-turn:"),
+  );
+  if (
+    session.deferConnect &&
+    session.resumeDropsTurn &&
+    resumeDropsTurnRefusal
+  ) {
+    session.initializationReady = false;
+    session.initializationError = resumeDropsTurnRefusal;
+    bridgeLogger.warn({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "session_resume_drops_turn_rejected",
+      message:
+        "guarded resume candidate rejected because the source session changed",
+      outcome: "failure",
+      sessionId: session.sessionId,
+      fields: {
+        drop_turn_id: session.resumeDropsTurn,
+        validation_fence_complete: session.resumeGuardFenceComplete === true,
+        error_message: resumeDropsTurnRefusal,
+      },
+    });
+    return;
+  }
+  const assistantError = session.lastAssistantError;
+  const authHint = errors.find((entry) => looksLikeAuthRequired(entry));
+  if (authHint) {
+    emitAuthRequired(session, authHint);
+  }
+  if (assistantError === "authentication_failed") {
+    emitAuthRequired(session);
+  }
+  finalizeOpenToolCalls(session, "failed");
+  const errorKind = classifyTurnErrorKind(subtype, errors, assistantError);
+  const fallback = subtype ? `turn failed: ${subtype}` : "turn failed";
+  const apiErrorStatus = numberField(
+    message,
+    "api_error_status",
+    "apiErrorStatus",
+  );
+  writeEvent({
+    event: "turn_error",
+    session_id: session.sessionId,
+    message: errors.length > 0 ? errors.join("\n") : fallback,
+    ...(queuedTurnCount !== undefined
+      ? { queued_turn_count: queuedTurnCount }
+      : {}),
+    error_kind: errorKind,
+    ...(subtype ? { sdk_result_subtype: subtype } : {}),
+    ...(assistantError ? { assistant_error: assistantError } : {}),
+    ...(apiErrorStatus !== undefined
+      ? { api_error_status: apiErrorStatus }
+      : {}),
+    ...(terminalReason ? { terminal_reason: terminalReason } : {}),
+  });
+  session.lastAssistantError = undefined;
+}
+
+function terminalReasonFromValue(value: unknown): TerminalReason | undefined {
+  switch (value) {
+    case "blocking_limit":
+    case "rapid_refill_breaker":
+    case "prompt_too_long":
+    case "image_error":
+    case "model_error":
+    case "aborted_streaming":
+    case "aborted_tools":
+    case "stop_hook_prevented":
+    case "hook_stopped":
+    case "tool_deferred":
+    case "max_turns":
+    case "background_requested":
+    case "api_error":
+    case "malformed_tool_use_exhausted":
+    case "budget_exhausted":
+    case "structured_output_retry_exhausted":
+    case "tool_deferred_unavailable":
+    case "turn_setup_failed":
+    case "completed":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+export function handleSdkMessage(
+  session: SessionState,
+  message: SDKMessage,
+): void {
+  if (session.startupFailure) {
+    return;
+  }
+  const msg = message as unknown as Record<string, unknown>;
+  const type = typeof msg.type === "string" ? msg.type : "";
+  const subtype =
+    type === "system" && typeof msg.subtype === "string" ? msg.subtype : "";
+  if (subtype !== "worker_shutting_down") {
+    cancelPendingWorkerShutdown(session);
+  }
+  logSdkMessageOrigin(session, msg);
+
+  if (type === "conversation_reset") {
+    const newConversationId = trimmedStringField(msg, "new_conversation_id");
+    if (!newConversationId) {
+      bridgeLogger.warn({
+        target: LOG_TARGETS.APP_SESSION,
+        eventName: "sdk_conversation_reset_invalid",
+        message: "SDK conversation reset omitted its new conversation identifier",
+        outcome: "ignored",
+        sessionId: session.sessionId,
+      });
+      return;
+    }
+    closeSideQuestions(session.sessionId, session.query);
+    void refreshUltracode(session);
+    emitSessionUpdate(session.sessionId, {
+      type: "conversation_reset",
+      new_conversation_id: newConversationId,
+      trigger: trimmedStringField(msg, "trigger"),
+      timestamp: trimmedStringField(msg, "timestamp"),
+      user_message_uuid: trimmedStringField(msg, "user_message_uuid"),
+    });
+    return;
+  }
+
+  if (type === "system") {
+    if (handleFallbackRetractionMessage(session, subtype, msg)) {
+      return;
+    }
+
+    if (subtype === "model_refusal_no_fallback") {
+      handleModelRefusalNoFallbackMessage(session, msg);
+      return;
+    }
+
+    if (subtype === "commands_changed") {
+      updateAvailableCommands(
+        session,
+        "commands_changed",
+        mapSdkSlashCommands(msg.commands),
+      );
+      return;
+    }
+
+    if (subtype === "background_tasks_changed") {
+      applyBackgroundTasksChanged(session, msg);
+      return;
+    }
+
+    if (subtype === "notification") {
+      const text = typeof msg.text === "string" ? msg.text : "";
+      emitSystemNoticeUpdate(session, notificationSeverity(msg.priority), text);
+      return;
+    }
+
+    if (subtype === "informational") {
+      handleInformationalSystemMessage(session, msg);
+      return;
+    }
+
+    if (subtype === "worker_shutting_down") {
+      handleWorkerShuttingDownSystemMessage(session, msg);
+      return;
+    }
+
+    if (subtype === "mirror_error") {
+      const error = typeof msg.error === "string" ? msg.error : "";
+      const key = asRecordOrNull(msg.key);
+      bridgeLogger.warn({
+        target: LOG_TARGETS.APP_SESSION,
+        eventName: "sdk_mirror_error_received",
+        message: "SDK transcript mirror error received",
+        outcome: "failure",
+        sessionId: session.sessionId,
+        fields: {
+          error_message: error || undefined,
+          project_key:
+            typeof key?.projectKey === "string" ? key.projectKey : undefined,
+          mirror_session_id:
+            typeof key?.sessionId === "string" ? key.sessionId : undefined,
+          subpath: typeof key?.subpath === "string" ? key.subpath : undefined,
+        },
+      });
+      return;
+    }
+
+    if (subtype === "plugin_install") {
+      const status = typeof msg.status === "string" ? msg.status : "";
+      const name = typeof msg.name === "string" ? msg.name : "";
+      const error = typeof msg.error === "string" ? msg.error : "";
+      bridgeLogger.info({
+        target: LOG_TARGETS.BRIDGE_SDK,
+        eventName: "sdk_plugin_install_received",
+        message: "SDK plugin install event received",
+        outcome: status === "failed" ? "failure" : status || "observed",
+        sessionId: session.sessionId,
+        fields: {
+          plugin_status: status || undefined,
+          plugin_name: name || undefined,
+          error_message: error || undefined,
+        },
+      });
+      if (status === "failed") {
+        const subject = name ? ` ${name}` : "";
+        const suffix = error ? `: ${error}` : ".";
+        emitSystemNoticeUpdate(
+          session,
+          "warning",
+          `Plugin install failed${subject}${suffix}`,
+        );
+      }
+      return;
+    }
+
+    if (subtype === "permission_denied") {
+      bridgeLogger.info({
+        target: LOG_TARGETS.BRIDGE_PERMISSION,
+        eventName: "sdk_permission_denied_received",
+        message: "SDK permission denied event received",
+        outcome: "denied",
+        sessionId: session.sessionId,
+        toolCallId:
+          typeof msg.tool_use_id === "string" ? msg.tool_use_id : undefined,
+        fields: {
+          tool_name:
+            typeof msg.tool_name === "string" ? msg.tool_name : undefined,
+          agent_id: typeof msg.agent_id === "string" ? msg.agent_id : undefined,
+          decision_reason_type:
+            typeof msg.decision_reason_type === "string"
+              ? msg.decision_reason_type
+              : undefined,
+          decision_reason:
+            typeof msg.decision_reason === "string"
+              ? msg.decision_reason
+              : undefined,
+          denial_message:
+            typeof msg.message === "string" ? msg.message : undefined,
+        },
+      });
+      return;
+    }
+
+    if (subtype === "memory_recall" || subtype === "thinking_tokens") {
+      bridgeLogger.debug({
+        target: LOG_TARGETS.BRIDGE_SDK,
+        eventName: "sdk_system_message_log_only",
+        message: "SDK system message handled with log-only policy",
+        outcome: "ignored",
+        sessionId: session.sessionId,
+        fields: {
+          sdk_subtype: subtype,
+          memory_count: Array.isArray(msg.memories)
+            ? msg.memories.length
+            : undefined,
+          estimated_tokens:
+            typeof msg.estimated_tokens === "number"
+              ? msg.estimated_tokens
+              : undefined,
+          estimated_tokens_delta:
+            typeof msg.estimated_tokens_delta === "number"
+              ? msg.estimated_tokens_delta
+              : undefined,
+          user_message_uuid: trimmedStringField(msg, "user_message_uuid"),
+        },
+      });
+      return;
+    }
+
+    if (subtype === "api_retry") {
+      const noResponse = asRecordOrNull(msg.no_response);
+      if (noResponse) {
+        bridgeLogger.debug({
+          target: LOG_TARGETS.BRIDGE_SDK,
+          eventName: "sdk_api_retry_no_response",
+          message: "SDK API retry included no-response timing metadata",
+          outcome: "observed",
+          sessionId: session.sessionId,
+          fields: {
+            waited_ms: nonNegativeNumberField(noResponse, "waited_ms", "waitedMs"),
+            retry_wait_ms: nonNegativeNumberField(
+              noResponse,
+              "retry_wait_ms",
+              "retryWaitMs",
+            ),
+          },
+        });
+      }
+      const update = buildApiRetryUpdate(msg);
+      if (update) {
+        emitSessionUpdate(session.sessionId, update);
+      }
+      return;
+    }
+
+    if (subtype === "session_state_changed") {
+      const state = parseRuntimeSessionState(msg.state);
+      if (state) {
+        emitSessionUpdate(session.sessionId, {
+          type: "runtime_session_state_update",
+          state,
+        });
+      }
+      return;
+    }
+
+    if (subtype === "init") {
+      const previousSessionId = session.sessionId;
+      const incomingSessionId =
+        typeof msg.session_id === "string" ? msg.session_id : session.sessionId;
+      updateSessionId(session, incomingSessionId);
+      if (session.connected) {
+        void refreshUltracode(session);
+      }
+      const modelName =
+        typeof msg.model === "string" ? msg.model : session.model;
+      session.model = modelName;
+      const currentModelChanged = refreshCurrentModel(session, false);
+
+      const incomingMode =
+        typeof msg.permissionMode === "string"
+          ? toPermissionMode(msg.permissionMode)
+          : null;
+      if (incomingMode) {
+        session.mode = incomingMode;
+      }
+      refreshSupportedModesForSession(session);
+      const fastModeChanged = setFastModeSnapshotIfChanged(
+        session,
+        msg.fast_mode_state,
+        msg.fast_mode_disabled_reason,
+      );
+
+      if (!session.connected) {
+        emitConnectEvent(session);
+      } else if (previousSessionId !== session.sessionId) {
+        emitSessionReplacedEvent(session);
+      } else {
+        if (currentModelChanged) {
+          emitCurrentModelUpdate(session);
+        }
+        if (incomingMode) {
+          emitSessionUpdate(session.sessionId, {
+            type: "mode_state_update",
+            mode: buildModeState(session, incomingMode),
+          });
+        }
+        if (fastModeChanged) {
+          emitFastModeUpdate(session);
+        }
+      }
+
+      if (Array.isArray(msg.slash_commands)) {
+        updateAvailableCommands(
+          session,
+          "init_slash_commands",
+          mapInitSlashCommands(msg.slash_commands),
+        );
+      }
+
+      if (Array.isArray(msg.mcp_servers)) {
+        emitMcpSnapshotFromStatuses(
+          session,
+          msg.mcp_servers as import("@anthropic-ai/claude-agent-sdk").McpServerStatus[],
+          "init",
+        );
+      }
+
+      if (
+        session.lastAvailableAgentsSignature === undefined &&
+        Array.isArray(msg.agents)
+      ) {
+        emitAvailableAgentsIfChanged(
+          session,
+          mapAvailableAgentsFromNames(msg.agents),
+        );
+      }
+
+      void session.query
+        .supportedCommands()
+        .then((commands) => {
+          const mapped = mapSdkSlashCommands(commands);
+          updateAvailableCommands(session, "supportedCommands", mapped);
+        })
+        .catch(() => {
+          // Best-effort only; slash commands from init were already emitted.
+        });
+      refreshAvailableAgents(session);
+      for (const settingsError of normalizeSettingsParseErrors(
+        msg.settings_errors ?? msg.settingsErrors,
+      )) {
+        emitSessionUpdate(session.sessionId, {
+          type: "settings_parse_error",
+          ...settingsError,
+        });
+      }
+      emitPluginLoadErrors(session, msg.plugin_errors);
+      return;
+    }
+
+    if (subtype === "status") {
+      const mode =
+        typeof msg.permissionMode === "string"
+          ? toPermissionMode(msg.permissionMode)
+          : null;
+      if (mode) {
+        session.mode = mode;
+        refreshSupportedModesForSession(session);
+        emitSessionUpdate(session.sessionId, {
+          type: "current_mode_update",
+          current_mode_id: mode,
+        });
+      }
+      if (msg.status === "compacting") {
+        emitSessionUpdate(session.sessionId, {
+          type: "compaction_update",
+          phase: "started",
+        });
+      } else if (msg.status === "requesting") {
+        emitSessionUpdate(session.sessionId, {
+          type: "session_status_update",
+          status: "requesting",
+        });
+      } else if (msg.status === null) {
+        if (msg.compact_result === "success") {
+          emitSessionUpdate(session.sessionId, {
+            type: "compaction_update",
+            phase: "finished",
+            result: "success",
+          });
+        } else if (msg.compact_result === "failed") {
+          const compactError =
+            typeof msg.compact_error === "string" &&
+            msg.compact_error.trim().length > 0
+              ? msg.compact_error.trim()
+              : undefined;
+          emitSessionUpdate(session.sessionId, {
+            type: "compaction_update",
+            phase: "finished",
+            result: "failed",
+            error_code:
+              compactError === "too_few_groups" ? "too_few_groups" : "unknown",
+            ...(compactError ? { error: compactError } : {}),
+          });
+        }
+        emitSessionUpdate(session.sessionId, {
+          type: "session_status_update",
+          status: "idle",
+        });
+      }
+      emitFastModeUpdateIfChanged(
+        session,
+        msg.fast_mode_state,
+        msg.fast_mode_disabled_reason,
+      );
+      return;
+    }
+
+    if (subtype === "compact_boundary") {
+      const compactMetadata = asRecordOrNull(msg.compact_metadata);
+      if (!compactMetadata) {
+        return;
+      }
+      const trigger = compactMetadata.trigger;
+      const preTokens = nonNegativeIntegerField(
+        compactMetadata,
+        "pre_tokens",
+        "preTokens",
+      );
+      const postTokens = nonNegativeIntegerField(
+        compactMetadata,
+        "post_tokens",
+        "postTokens",
+      );
+      const durationMs = nonNegativeIntegerField(
+        compactMetadata,
+        "duration_ms",
+        "durationMs",
+      );
+      if (
+        (trigger === "manual" || trigger === "auto") &&
+        preTokens !== undefined
+      ) {
+        emitSessionUpdate(session.sessionId, {
+          type: "compaction_update",
+          phase: "boundary",
+          trigger,
+          pre_tokens: preTokens,
+          ...(postTokens !== undefined ? { post_tokens: postTokens } : {}),
+          ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+        });
+      }
+      return;
+    }
+
+    if (subtype === "local_command_output") {
+      const content = typeof msg.content === "string" ? msg.content : "";
+      if (content.trim().length > 0) {
+        emitSessionUpdate(session.sessionId, {
+          type: "agent_message_chunk",
+          content: { type: "text", text: content },
+          ...(sourceMessageUuid(msg)
+            ? { source_message_uuid: sourceMessageUuid(msg) }
+            : {}),
+        });
+      }
+      return;
+    }
+
+    if (subtype === "elicitation_complete") {
+      const elicitationId =
+        typeof msg.elicitation_id === "string" ? msg.elicitation_id : "";
+      if (!elicitationId) {
+        return;
+      }
+      writeEvent({
+        event: "elicitation_complete",
+        session_id: session.sessionId,
+        completion: {
+          elicitation_id: elicitationId,
+          ...(typeof msg.mcp_server_name === "string"
+            ? { server_name: msg.mcp_server_name }
+            : {}),
+        },
+      });
+      return;
+    }
+
+    if (handleTaskSystemMessage(session, subtype, msg)) {
+      return;
+    }
+    bridgeLogger.debug({
+      target: LOG_TARGETS.BRIDGE_SDK,
+      eventName: "sdk_system_message_unhandled",
+      message: "SDK system message ignored by explicit fallback policy",
+      outcome: "ignored",
+      sessionId: session.sessionId,
+      fields: {
+        sdk_subtype: subtype || undefined,
+      },
+    });
+    return;
+  }
+
+  if (type === "prompt_suggestion") {
+    const suggestion =
+      typeof msg.suggestion === "string" ? msg.suggestion.trim() : "";
+    if (suggestion) {
+      emitSessionUpdate(session.sessionId, {
+        type: "prompt_suggestion_update",
+        suggestion,
+      });
+    }
+    return;
+  }
+
+  if (type === "settings_parse_error") {
+    for (const settingsError of normalizeSettingsParseErrors(msg)) {
+      emitSessionUpdate(session.sessionId, {
+        type: "settings_parse_error",
+        ...settingsError,
+      });
+    }
+    return;
+  }
+
+  if (type === "auth_status") {
+    const output = Array.isArray(msg.output)
+      ? msg.output
+          .filter((entry): entry is string => typeof entry === "string")
+          .join("\n")
+      : "";
+    const errorText = typeof msg.error === "string" ? msg.error : "";
+    const combined = [errorText, output]
+      .filter((entry) => entry.length > 0)
+      .join("\n");
+    if (combined && looksLikeAuthRequired(combined)) {
+      emitAuthRequired(session, combined);
+    }
+    return;
+  }
+
+  if (type === "stream_event") {
+    if (
+      msg.parent_tool_use_id === null ||
+      msg.parent_tool_use_id === undefined
+    ) {
+      emitUserMessageStarted(session, msg, "stream_event");
+    }
+    if (msg.event && typeof msg.event === "object") {
+      const parentToolUseId =
+        typeof msg.parent_tool_use_id === "string"
+          ? msg.parent_tool_use_id
+          : undefined;
+      handleStreamEvent(
+        session,
+        msg.event as Record<string, unknown>,
+        parentToolUseId,
+        sourceMessageUuid(msg),
+      );
+    }
+    return;
+  }
+
+  if (type === "tool_progress") {
+    const toolUseId =
+      typeof msg.tool_use_id === "string" ? msg.tool_use_id : "";
+    const toolName = typeof msg.tool_name === "string" ? msg.tool_name : "Tool";
+    const parentToolUseId =
+      typeof msg.parent_tool_use_id === "string" ? msg.parent_tool_use_id : "";
+    const taskId = typeof msg.task_id === "string" ? msg.task_id : "";
+    const taskToolUseId = taskId
+      ? (session.taskToolUseIds.get(taskId) ?? "")
+      : "";
+    if (isHiddenToolUse(session, toolUseId, toolName)) {
+      return;
+    }
+    const progressTarget = resolveToolProgressTarget(
+      session,
+      taskToolUseId,
+      toolUseId,
+      parentToolUseId,
+    );
+    const resolvedToolUseId = progressTarget?.toolUseId ?? "";
+    bridgeLogger.debug({
+      target: LOG_TARGETS.APP_TOOL,
+      eventName: "sdk_tool_progress_linkage_observed",
+      message: "SDK tool progress linkage observed",
+      outcome: progressTarget?.source ?? "orphaned",
+      sessionId: session.sessionId,
+      toolCallId: resolvedToolUseId || toolUseId || undefined,
+      fields: {
+        tool_name: toolName,
+        tool_use_id: toolUseId || undefined,
+        parent_tool_use_id: parentToolUseId || undefined,
+        task_id: taskId || undefined,
+        task_resolved_tool_use_id: taskToolUseId || undefined,
+        resolved_tool_use_id: resolvedToolUseId || undefined,
+        correlation_source: progressTarget?.source,
+      },
+    });
+    if (resolvedToolUseId) {
+      const hasSubagentRetry = Object.hasOwn(msg, "subagent_retry");
+      const subagentRetry = hasSubagentRetry
+        ? buildSubagentRetryUpdate(msg)
+        : null;
+      if (hasSubagentRetry && !subagentRetry) {
+        bridgeLogger.warn({
+          target: LOG_TARGETS.APP_TOOL,
+          eventName: "sdk_subagent_retry_rejected",
+          message: "ignored malformed SDK subagent retry progress",
+          outcome: "invalid_payload",
+          sessionId: session.sessionId,
+          toolCallId: resolvedToolUseId,
+        });
+      }
+      const subagentType =
+        typeof msg.subagent_type === "string" && msg.subagent_type.trim()
+          ? msg.subagent_type.trim()
+          : undefined;
+      emitToolProgressUpdate(session, resolvedToolUseId, {
+        ...(subagentRetry
+          ? { subagentRetry }
+          : hasSubagentRetry
+            ? {}
+            : { subagentRetry: { state: "clear" } }),
+        ...(subagentType ? { subagentType } : {}),
+      });
+    }
+    return;
+  }
+
+  if (type === "tool_use_summary") {
+    const summary = typeof msg.summary === "string" ? msg.summary : "";
+    const toolIds = Array.isArray(msg.preceding_tool_use_ids)
+      ? msg.preceding_tool_use_ids.filter(
+          (id): id is string => typeof id === "string",
+        )
+      : [];
+    if (summary && toolIds.length > 0) {
+      for (const toolUseId of toolIds) {
+        if (session.hiddenToolUseIds.has(toolUseId)) {
+          continue;
+        }
+        emitToolSummaryUpdate(session, toolUseId, summary);
+      }
+    }
+    return;
+  }
+
+  if (type === "rate_limit_event") {
+    const rateLimitInfo = asRecordOrNull(msg.rate_limit_info);
+    const update = buildRateLimitUpdate(msg.rate_limit_info);
+    const rawIsUsingOverage =
+      typeof rateLimitInfo?.isUsingOverage === "boolean"
+        ? rateLimitInfo.isUsingOverage
+        : undefined;
+    const rawOverageInUse =
+      typeof rateLimitInfo?.overageInUse === "boolean"
+        ? rateLimitInfo.overageInUse
+        : undefined;
+    if (
+      rawIsUsingOverage !== undefined &&
+      rawOverageInUse !== undefined &&
+      rawIsUsingOverage !== rawOverageInUse
+    ) {
+      bridgeLogger.warn({
+        target: LOG_TARGETS.APP_SESSION,
+        eventName: "sdk_rate_limit_overage_spelling_conflict",
+        message: "SDK rate limit overage booleans conflict",
+        outcome: "using_overageInUse",
+        sessionId: session.sessionId,
+        fields: {
+          raw_is_using_overage: rawIsUsingOverage,
+          raw_overage_in_use: rawOverageInUse,
+        },
+      });
+    }
+    bridgeLogger.debug({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "sdk_rate_limit_event_received",
+      message: "SDK rate limit event received",
+      outcome: update ? "success" : "dropped",
+      sessionId: session.sessionId,
+      fields: {
+        raw_status:
+          typeof rateLimitInfo?.status === "string"
+            ? rateLimitInfo.status
+            : undefined,
+        raw_rate_limit_type:
+          typeof rateLimitInfo?.rateLimitType === "string"
+            ? rateLimitInfo.rateLimitType
+            : undefined,
+        raw_utilization: numberField(rateLimitInfo ?? {}, "utilization"),
+        raw_resets_at: numberField(rateLimitInfo ?? {}, "resetsAt"),
+        raw_overage_status:
+          typeof rateLimitInfo?.overageStatus === "string"
+            ? rateLimitInfo.overageStatus
+            : undefined,
+        raw_overage_resets_at: numberField(
+          rateLimitInfo ?? {},
+          "overageResetsAt",
+        ),
+        raw_is_using_overage: rawIsUsingOverage,
+        raw_overage_in_use: rawOverageInUse,
+        raw_surpassed_threshold: numberField(
+          rateLimitInfo ?? {},
+          "surpassedThreshold",
+        ),
+        parsed_status: update?.status,
+        parsed_rate_limit_type: update?.rate_limit_type,
+        parsed_utilization: update?.utilization,
+        parsed_resets_at: update?.resets_at,
+        parsed_overage_status: update?.overage_status,
+        parsed_overage_resets_at: update?.overage_resets_at,
+        parsed_is_using_overage: update?.is_using_overage,
+        parsed_surpassed_threshold: update?.surpassed_threshold,
+      },
+    });
+    bridgeLogger.debug({
+      target: LOG_TARGETS.APP_SESSION,
+      eventName: "sdk_rate_limit_event_raw",
+      message: "SDK rate limit event raw payload",
+      outcome: rateLimitInfo ? "success" : "dropped",
+      sessionId: session.sessionId,
+      fields: {
+        raw_rate_limit_info: msg.rate_limit_info,
+      },
+    });
+    if (update) {
+      emitSessionUpdate(session.sessionId, update);
+    }
+    return;
+  }
+
+  if (type === "user") {
+    const notification = parseDetachedToolNotification(msg);
+    if (notification && session.toolCalls.has(notification.toolUseId)) {
+      const toolCall = session.toolCalls.get(notification.toolUseId);
+      if (toolCall?.status === "detached") {
+        emitToolResultUpdate(
+          session,
+          notification.toolUseId,
+          notification.isError,
+          notification.output,
+          undefined,
+          sourceMessageUuid(msg),
+        );
+      }
+      return;
+    }
+    const externalMessageUpdate = externalMessageUpdateFromSdkUser(msg);
+    if (externalMessageUpdate) {
+      emitSessionUpdate(session.sessionId, externalMessageUpdate);
+    }
+    const handledBlocks = handleUserToolResultBlocks(session, msg);
+
+    const toolUseId =
+      typeof msg.parent_tool_use_id === "string" ? msg.parent_tool_use_id : "";
+    const rawToolUseResult = messageToolUseResult(msg);
+    if (!handledBlocks && toolUseId && rawToolUseResult !== undefined) {
+      if (session.hiddenToolUseIds.has(toolUseId)) {
+        return;
+      }
+      const parsed = unwrapToolUseResult(rawToolUseResult);
+      emitToolResultUpdate(
+        session,
+        toolUseId,
+        parsed.isError,
+        parsed.content,
+        rawToolUseResult,
+        sourceMessageUuid(msg),
+        parseToolNonExecutionMetadata(msg.tool_result_meta).get(toolUseId),
+      );
+    }
+    return;
+  }
+
+  if (type === "assistant") {
+    if (msg.error === "authentication_failed") {
+      emitAuthRequired(session);
+    }
+    if (
+      msg.parent_tool_use_id === null ||
+      msg.parent_tool_use_id === undefined
+    ) {
+      emitUserMessageStarted(session, msg, "assistant");
+    }
+    handleAssistantMessage(session, msg);
+    return;
+  }
+
+  if (type === "result") {
+    handleResultMessage(session, msg);
+    return;
+  }
+
+  // Bundled Claude Code 2.1.258 emits this runtime frame even though the
+  // corresponding SDK 0.3.258 TypeScript union does not declare it.
+  if (type === "command_lifecycle") {
+    handleCommandLifecycleMessage(session, msg);
+    return;
+  }
+
+  bridgeLogger.debug({
+    target: LOG_TARGETS.BRIDGE_SDK,
+    eventName: "sdk_message_unhandled",
+    message: "SDK message ignored by explicit top-level fallback policy",
+    outcome: "ignored",
+    sessionId: session.sessionId,
+    fields: sdkMessageDiagnosticFields(msg),
+  });
+}

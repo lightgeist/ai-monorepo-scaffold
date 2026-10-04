@@ -1,0 +1,234 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025 Simon Peter Rothgang
+
+use super::block_cache::BlockCache;
+use crate::agent::model;
+
+pub struct ToolCallInfo {
+    pub id: String,
+    pub source_message_uuids: Vec<String>,
+    pub title: String,
+    /// The SDK tool name from `meta.claudeCode.toolName` when available.
+    /// Falls back to a derived name when metadata is absent.
+    pub sdk_tool_name: String,
+    pub raw_input: Option<serde_json::Value>,
+    pub raw_input_bytes: usize,
+    pub locations: Vec<model::ToolCallLocation>,
+    pub output_metadata: Option<model::ToolOutputMetadata>,
+    pub task_metadata: Option<model::TaskMetadata>,
+    pub status: model::ToolCallStatus,
+    pub content: Vec<model::ToolCallContent>,
+    /// Hidden tool calls are subagent children - not rendered directly.
+    pub hidden: bool,
+    /// Terminal ID if this is a shell SDK tool call with a running/completed terminal.
+    pub terminal_id: Option<String>,
+    /// The shell command that was executed (e.g. "echo hello && ls -la").
+    pub terminal_command: Option<String>,
+    /// Latest terminal output supplied by the bridge.
+    pub terminal_output: Option<String>,
+    /// Cached output length for telemetry and retention accounting.
+    pub terminal_output_len: usize,
+    /// Per-block render cache for this tool call.
+    pub cache: BlockCache,
+    /// Inline permission prompt - rendered inside this tool call block.
+    pub pending_permission: Option<InlinePermission>,
+    /// Inline question prompt from `AskUserQuestion`.
+    pub pending_question: Option<InlineQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentPermissionContext {
+    pub subagent_label: String,
+    pub child_tool_name: String,
+    pub child_tool_title: String,
+    pub parent_tool_call_id: String,
+    pub parent_tool_title: Option<String>,
+    pub parent_model: Option<String>,
+    pub parent_raw_input: Option<serde_json::Value>,
+}
+
+impl ToolCallInfo {
+    pub fn add_source_message_uuid(&mut self, source_message_uuid: Option<&str>) -> bool {
+        let Some(source_message_uuid) =
+            source_message_uuid.map(str::trim).filter(|uuid| !uuid.is_empty())
+        else {
+            return false;
+        };
+        if self.source_message_uuids.iter().any(|uuid| uuid == source_message_uuid) {
+            return false;
+        }
+        self.source_message_uuids.push(source_message_uuid.to_owned());
+        true
+    }
+
+    #[must_use]
+    pub fn has_source_message_uuid(&self, source_message_uuid: &str) -> bool {
+        self.source_message_uuids.iter().any(|uuid| uuid == source_message_uuid)
+    }
+
+    pub(crate) fn estimate_json_value_bytes(value: &serde_json::Value) -> usize {
+        serde_json::to_string(value).map_or(0, |json| json.len())
+    }
+
+    #[must_use]
+    pub fn is_execute_tool(&self) -> bool {
+        is_execute_tool_name(&self.sdk_tool_name)
+    }
+
+    #[must_use]
+    pub fn is_ask_question_tool(&self) -> bool {
+        is_ask_question_tool_name(&self.sdk_tool_name)
+    }
+
+    #[must_use]
+    pub fn is_exit_plan_mode_tool(&self) -> bool {
+        is_exit_plan_mode_tool_name(&self.sdk_tool_name)
+    }
+
+    #[must_use]
+    pub fn assistant_auto_backgrounded(&self) -> bool {
+        self.output_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.bash.as_ref())
+            .and_then(|metadata| metadata.assistant_auto_backgrounded)
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn timed_out_after_ms(&self) -> Option<u64> {
+        self.output_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.bash.as_ref())
+            .and_then(|metadata| metadata.timed_out_after_ms)
+    }
+
+    #[must_use]
+    pub fn background_ends_with_final_response(&self) -> bool {
+        self.output_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.bash.as_ref())
+            .and_then(|metadata| metadata.background_ends_with_final_response)
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn task_is_backgrounded(&self) -> bool {
+        self.task_metadata.as_ref().and_then(|metadata| metadata.is_backgrounded).unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn task_spawn_depth(&self) -> Option<u64> {
+        self.task_metadata.as_ref().and_then(|metadata| metadata.spawn_depth)
+    }
+
+    #[must_use]
+    pub fn skill_is_backgrounded(&self) -> bool {
+        self.output_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.skill.as_ref())
+            .and_then(|metadata| metadata.background)
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn non_execution_metadata(&self) -> Option<&model::ToolNonExecutionMetadata> {
+        self.output_metadata.as_ref()?.non_execution.as_ref()
+    }
+
+    #[must_use]
+    pub fn output_was_staged(&self) -> bool {
+        self.output_metadata.as_ref().is_some_and(|metadata| metadata.staged)
+    }
+
+    #[must_use]
+    pub fn hidden_unless_focused_interaction(&self) -> bool {
+        self.hidden && self.pending_permission.is_none() && self.pending_question.is_none()
+    }
+
+    #[must_use]
+    pub fn is_hidden_focused_interaction(&self) -> bool {
+        self.hidden && (self.pending_permission.is_some() || self.pending_question.is_some())
+    }
+
+    #[must_use]
+    pub fn is_subagent_root_tool(&self) -> bool {
+        !self.hidden && matches!(self.sdk_tool_name.as_str(), "Task" | "Agent")
+    }
+
+    /// Invalidate cached rendered lines for this tool call.
+    pub fn invalidate_render_cache(&mut self) {
+        self.cache.invalidate();
+    }
+
+    pub fn set_raw_input(&mut self, raw_input: Option<serde_json::Value>) -> bool {
+        if self.raw_input == raw_input {
+            return false;
+        }
+        self.raw_input_bytes = raw_input.as_ref().map_or(0, Self::estimate_json_value_bytes);
+        self.raw_input = raw_input;
+        true
+    }
+
+    pub fn set_locations(&mut self, locations: Vec<model::ToolCallLocation>) -> bool {
+        if self.locations == locations {
+            return false;
+        }
+        self.locations = locations;
+        true
+    }
+}
+
+#[must_use]
+pub fn is_execute_tool_name(tool_name: &str) -> bool {
+    tool_name.eq_ignore_ascii_case("bash") || tool_name.eq_ignore_ascii_case("powershell")
+}
+
+#[must_use]
+pub fn is_ask_question_tool_name(tool_name: &str) -> bool {
+    tool_name.eq_ignore_ascii_case("askuserquestion")
+}
+
+#[must_use]
+pub fn is_exit_plan_mode_tool_name(tool_name: &str) -> bool {
+    tool_name.eq_ignore_ascii_case("exitplanmode")
+}
+
+/// Permission state stored inline on a `ToolCallInfo`, so the permission
+/// controls render inside the tool call block (unified edit/permission UX).
+pub struct InlinePermission {
+    pub options: Vec<model::PermissionOption>,
+    pub display: Option<model::PermissionDisplay>,
+    pub subagent_context: Option<SubagentPermissionContext>,
+    pub response_tx: tokio::sync::oneshot::Sender<model::RequestPermissionResponse>,
+    pub selected_index: usize,
+    /// Whether this permission currently has keyboard focus.
+    /// When multiple permissions are pending, only the focused one
+    /// shows the selection arrow and accepts Left/Right/Enter input.
+    pub focused: bool,
+}
+
+pub struct InlineQuestion {
+    pub prompt: model::QuestionPrompt,
+    pub response_tx: tokio::sync::oneshot::Sender<model::RequestQuestionResponse>,
+    pub focused_option_index: usize,
+    pub selected_option_indices: std::collections::BTreeSet<usize>,
+    pub notes: String,
+    pub notes_cursor: usize,
+    pub editing_notes: bool,
+    pub focused: bool,
+    pub question_index: usize,
+    pub total_questions: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_execute_tool_name;
+
+    #[test]
+    fn execute_tool_names_include_supported_shells() {
+        assert!(is_execute_tool_name("Bash"));
+        assert!(is_execute_tool_name("PowerShell"));
+        assert!(is_execute_tool_name("powershell"));
+        assert!(!is_execute_tool_name("Shell"));
+    }
+}

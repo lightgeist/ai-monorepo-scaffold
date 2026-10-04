@@ -1,0 +1,200 @@
+# Diagnostics
+
+Interactive TUI runs write a small local diagnostics baseline by default. The baseline records warnings, errors, and minimal application lifecycle metadata using a restricted field set; detailed diagnostics remain opt-in because verbose logs can grow quickly and may contain private context.
+
+## Doctor
+
+Run deterministic environment diagnostics:
+
+```bash
+atlascode-rs doctor
+```
+
+For machine-readable output:
+
+```bash
+atlascode-rs doctor --json
+```
+
+For CI or support scripts that should fail on hard runtime prerequisites:
+
+```bash
+atlascode-rs doctor --strict
+```
+
+Use `-C, --dir` with `doctor` to inspect project-local settings for a specific folder:
+
+```bash
+atlascode-rs -C path/to/project doctor
+```
+
+## Config Inspection
+
+Inspect resolved config paths without starting the TUI:
+
+```bash
+atlascode-rs config
+atlascode-rs config path
+```
+
+`atlascode-rs config` prints the same path summary as `config path`, including user settings, project-local settings, user preferences, and whether each file is present and valid. Use `-C, --dir` to inspect project-local config for a specific folder.
+
+For script-friendly path output:
+
+```bash
+atlascode-rs config path --which settings
+atlascode-rs config path --which local-settings
+atlascode-rs config path --which preferences
+```
+
+Show a concise redacted config summary:
+
+```bash
+atlascode-rs config show
+atlascode-rs config show --json
+```
+
+Export a support-safe config snapshot:
+
+```bash
+atlascode-rs config export --output atlascode-rs-config.json
+```
+
+Config output redacts obvious credentials by default. Export refuses to overwrite existing files, and inspection does not repair, back up, normalize, or rewrite config files. Malformed existing config files are reported as invalid and cause `show` or `export` to return a non-zero exit code.
+
+## Logging
+
+Expand the baseline with a named diagnostics preset:
+
+```bash
+atlascode-rs --enable-logs --diagnostics-preset session
+atlascode-rs --enable-logs --diagnostics-preset render
+```
+
+Available presets:
+
+| Preset | Use when |
+| --- | --- |
+| `runtime` | Debugging general app, bridge, session, tool, permission, network, and update flow. |
+| `session` | Debugging session startup, permission, and command flow. |
+| `render` | Debugging rendering, cache, input, and paste behavior. |
+| `bridge` | Debugging Agent SDK bridge lifecycle, protocol, SDK, permission, and MCP behavior. |
+| `full` | Capturing the broadest diagnostic trace. |
+
+Use an explicit log path when you want the file somewhere predictable:
+
+```bash
+atlascode-rs --enable-logs --diagnostics-preset bridge --log-file atlascode-rs.log
+```
+
+Use an explicit tracing filter for targeted debugging:
+
+```bash
+atlascode-rs --log-filter "info,app.render=trace,bridge.protocol=debug"
+```
+
+`--log-filter` overrides `--diagnostics-preset`. Every interactive run writes to a timestamped default diagnostics file when `--log-file` is omitted. With no logging options, the filter is `warn,app.lifecycle=info` and versioned `atlascode-rs-baseline/v1` records retain only stable event metadata such as event name, message, outcome, error classification, duration, counts, and logging policy. Session and request identifiers, paths, commands, content, previews, and raw error payloads are omitted from the baseline format.
+
+Baseline logging is best-effort: if the default log cannot be initialized, the app continues without disrupting the TUI. Explicitly requested detailed logging still reports initialization failures as startup errors.
+
+The default diagnostics directory is under the platform local data directory:
+
+- Windows: `%LOCALAPPDATA%\atlascode-rs\logs\runtime\`
+- Linux: usually `$XDG_DATA_HOME/atlascode-rs/logs/runtime/` or `~/.local/share/atlascode-rs/logs/runtime/`
+- macOS: the platform data directory reported by the `dirs` crate, under `atlascode-rs/logs/runtime/`
+
+Default runtime log files include the UTC start timestamp, process id, and a short run id, for example:
+
+```text
+atlascode-rs-20260614T075924Z-p12345-r8f3a2c1.log
+```
+
+Logs rotate at 10 MB and keep up to five rotated files per run. Default runtime logs are retained up to 256 MB, 30 days, or 100 managed files, while always preserving at least 10 newest files. Retention only applies to app-managed timestamped files in the default runtime log directory; explicit `--log-file` paths are never cleaned up by the app.
+
+`--log-append` appends to an explicit `--log-file`. When used without `--log-file`, it appends to the legacy shared default file `atlascode-rs.log` for compatibility; prefer the normal timestamped defaults for new diagnostics.
+
+## Finding Logs
+
+Use the logs command to find diagnostics paths without starting the TUI:
+
+```bash
+atlascode-rs logs
+atlascode-rs logs --path
+atlascode-rs logs --latest
+```
+
+`atlascode-rs logs` prints the runtime log directory, legacy log path, latest discovered log, and common follow-up commands. `--path` prints only the default runtime log directory for scripts. `--latest` prints only the latest runtime log path, falling back to the legacy shared log when no timestamped runtime log exists.
+
+To inspect recent log output safely:
+
+```bash
+atlascode-rs logs --tail 200
+```
+
+Tail output is redacted for obvious credentials such as API keys, bearer tokens, OAuth tokens, passwords, and authorization headers before it is printed.
+
+## Debug Bundles
+
+Create a redacted support bundle with:
+
+```bash
+atlascode-rs logs --bundle --yes
+```
+
+Without `--yes`, an interactive terminal is prompted before the bundle is written. Use `--output <PATH>` to choose the ZIP path.
+
+The manifest uses schema `atlascode-rs-debug-bundle/v2`. Diagnostics paths describe the runtime log directory and legacy log path.
+
+The bundle includes:
+
+- `manifest.json`
+- `doctor.json`, equivalent to `atlascode-rs doctor --json`
+- selected recent runtime logs
+- the legacy log if present
+- bridge diagnostics extracted from structured log records
+- `last-crash.json` when the previous run crashed
+- diagnostics paths
+
+The bundle excludes full config files, Claude credentials, environment dumps, and arbitrary project files. Redaction removes obvious credentials, and baseline logs omit common sensitive diagnostic fields. Detailed logs can still contain private conversation text, local file paths, command output, session identifiers, or project-specific context. Review a bundle before sharing it publicly.
+
+## Failure Reports
+
+Top-level failures print a short issue-friendly report to stderr with a category, exit code, version, platform, latest discovered log path, and one next-step command. Bridge failures are categorized as spawn, initialization, stdout close, SDK/protocol failure, or timeout so support output points at the likely failing boundary.
+
+Unexpected Rust panics install a local panic hook. The hook writes a redacted `last-crash.json` file in the diagnostics root and prints the same safe-to-paste metadata to stderr. No crash report is uploaded automatically.
+
+## Bridge Diagnostics
+
+When detailed diagnostics are requested through `--enable-logs`, a preset, `--log-file`, `--log-filter`, `--log-append`, or `RUST_LOG`, bridge diagnostics are enabled and bridge stderr is captured into the structured log. The always-on baseline leaves the high-volume bridge diagnostic stream disabled while retaining native bridge lifecycle warnings and errors.
+
+The bridge script can be overridden with:
+
+```bash
+atlascode-rs --bridge-script /path/to/agent-sdk/dist/bridge.js
+```
+
+or:
+
+```bash
+ATLASCODE_RS_AGENT_BRIDGE=/path/to/agent-sdk/dist/bridge.js
+```
+
+Debug builds can override the bridge runtime with:
+
+```bash
+ATLASCODE_RS_AGENT_BRIDGE_RUNTIME=/path/to/bun
+```
+
+Release npm installs use the root package launcher to start the native platform binary and point it at the bundled bridge script. The native binary resolves the private `atlascode-rs-bridge-bun` executable from the installed platform package. In `doctor --json`, the runtime checks are reported as `bridge_runtime`, `bridge_runtime_version`, and `bridge_script`.
+
+## Useful Issue Reports
+
+Include:
+
+- `atlascode-rs --version`
+- OS and terminal.
+- Install method: npm package, source build, fork build, or manual binary.
+- The exact command used to launch the app.
+- Whether a custom bridge script or debug bridge runtime override was used.
+- A short reproduction.
+- A `atlascode-rs logs --bundle --yes` bundle or relevant redacted log snippets, not full secrets or private conversation content.

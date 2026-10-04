@@ -1,0 +1,56 @@
+{
+  "name": "atlascode-rs",
+  "version": "0.1.0",
+  "description": "atlascode-rs: a native coding terminal powered by the Claude Agent SDK",
+  "keywords": [
+    "cli",
+    "tui",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "agent-sdk",
+    "ai",
+    "terminal",
+    "rust",
+    "ratatui"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lightgeist/ai-monorepo-scaffold.git",
+    "directory": "standalone/atlascode-rs"
+  },
+  "bugs": {
+    "url": "https://github.com/lightgeist/ai-monorepo-scaffold/issues"
+  },
+  "homepage": "https://github.com/lightgeist/ai-monorepo-scaffold/tree/atlascode-rs/rebrand-20261004/standalone/atlascode-rs#readme",
+  "bin": {
+    "atlascode-rs": "bin/atlascode-rs.js"
+  },
+  "files": [
+    "bin",
+    "agent-sdk/dist",
+    "LICENSE",
+    "README.md",
+    "NOTICE",
+    "PROVENANCE.json"
+  ],
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.288"
+  },
+  "scripts": {
+    "prepack": "npm --prefix agent-sdk run build",
+    "quality:duplicates": "jscpd --config .jscpd.json src agent-sdk/src bin --no-tips --no-colors",
+    "quality:duplicates:summary": "node scripts/quality/jscpd-warning-summary.mjs jscpd-report/jscpd-report.json"
+  },
+  "devDependencies": {
+    "jscpd": "5.3.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": true
+}

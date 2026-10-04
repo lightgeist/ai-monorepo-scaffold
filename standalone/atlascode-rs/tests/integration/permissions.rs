@@ -1,0 +1,232 @@
+// Modified for atlascode-rs, 2026; see NOTICE and PROVENANCE.json.
+// SPDX-License-Identifier: Apache-2.0
+// Permission grant/deny flow integration tests.
+// Validates that PermissionRequest events are correctly attached to tool calls,
+// that the pending_interaction_ids queue is maintained, and that responses
+// are sent through the oneshot channel.
+
+use atlascode_rs::agent::model;
+use atlascode_rs::app::{AppStatus, MessageBlock};
+use pretty_assertions::assert_eq;
+use tokio::sync::oneshot;
+
+use crate::helpers::{
+    permission_request, send_client_event, session_update, test_app, turn_complete,
+};
+
+/// Helper: create a tool call, send it, then send a permission request for it.
+/// Returns the oneshot receiver so the test can verify the response.
+fn setup_permission(
+    app: &mut atlascode_rs::app::App,
+    tool_id: &str,
+    options: Vec<model::PermissionOption>,
+) -> oneshot::Receiver<model::RequestPermissionResponse> {
+    // First create the tool call so it exists in the index
+    let id = tool_id.to_owned();
+    let tc = model::ToolCall::new(id, "Write file").status(model::ToolCallStatus::InProgress);
+    send_client_event(app, session_update(model::SessionUpdate::ToolCall(tc)));
+
+    let (response_tx, response_rx) = oneshot::channel();
+    let tool_call_update =
+        model::ToolCallUpdate::new(tool_id.to_owned(), model::ToolCallUpdateFields::new());
+    let request =
+        model::RequestPermissionRequest::new("test-session", tool_call_update, options, None);
+    send_client_event(app, permission_request(request, response_tx));
+    response_rx
+}
+
+fn allow_deny_options() -> Vec<model::PermissionOption> {
+    vec![
+        model::PermissionOption::new("allow", "Allow", model::PermissionOptionKind::AllowOnce),
+        model::PermissionOption::new("deny", "Deny", model::PermissionOptionKind::RejectOnce),
+    ]
+}
+
+fn task_item(id: &str, subject: &str, status: model::TaskStatus) -> model::TaskItem {
+    model::TaskItem {
+        task_id: id.to_owned(),
+        subject: subject.to_owned(),
+        description: None,
+        active_form: None,
+        status,
+        owner: None,
+        blocks: Vec::new(),
+        blocked_by: Vec::new(),
+        metadata: None,
+        source_tool_call_id: None,
+    }
+}
+
+// --- PermissionRequest attaches to tool call ---
+
+#[tokio::test]
+async fn permission_request_attaches_to_tool_call() {
+    let mut app = test_app();
+    let _rx = setup_permission(&mut app, "tc-perm-1", allow_deny_options());
+
+    assert_eq!(app.turn.pending_interaction_ids.len(), 1);
+    assert_eq!(app.turn.pending_interaction_ids[0], "tc-perm-1");
+
+    // The tool call should have a pending_permission
+    let (mi, bi) = app.lookup_tool_call("tc-perm-1").expect("tc-perm-1 indexed");
+    if let MessageBlock::ToolCall(tc) = &app.transcript.messages[mi].blocks[bi] {
+        assert!(tc.pending_permission.is_some());
+        let perm = tc.pending_permission.as_ref().unwrap();
+        assert_eq!(perm.options.len(), 2);
+        assert_eq!(perm.selected_index, 0);
+        assert!(perm.focused, "first permission should be focused");
+    } else {
+        panic!("expected ToolCall block");
+    }
+}
+
+// --- Permission for unknown tool call auto-rejects ---
+
+#[tokio::test]
+async fn permission_for_unknown_tool_call_auto_rejects() {
+    let mut app = test_app();
+
+    let (response_tx, mut response_rx) = oneshot::channel();
+    let tool_call_update =
+        model::ToolCallUpdate::new("nonexistent", model::ToolCallUpdateFields::new());
+    let options = allow_deny_options();
+    let request =
+        model::RequestPermissionRequest::new("test-session", tool_call_update, options, None);
+    send_client_event(&mut app, permission_request(request, response_tx));
+
+    // Should NOT be in pending queue
+    assert!(app.turn.pending_interaction_ids.is_empty());
+
+    // The response should have been sent (auto-reject with last option = "deny")
+    let response = response_rx.try_recv();
+    assert!(response.is_ok(), "auto-reject should send response immediately");
+    let resp = response.unwrap();
+    if let model::RequestPermissionOutcome::Selected(selected) = resp.outcome {
+        assert_eq!(selected.option_id.clone(), "deny", "auto-reject should pick last option");
+    } else {
+        panic!("expected Selected outcome from auto-reject");
+    }
+}
+
+// --- Multiple permissions queue correctly ---
+
+#[tokio::test]
+async fn multiple_permissions_queue_in_order() {
+    let mut app = test_app();
+    let _rx1 = setup_permission(&mut app, "tc-q1", allow_deny_options());
+    let _rx2 = setup_permission(&mut app, "tc-q2", allow_deny_options());
+
+    assert_eq!(app.turn.pending_interaction_ids.len(), 2);
+    assert_eq!(app.turn.pending_interaction_ids[0], "tc-q1");
+    assert_eq!(app.turn.pending_interaction_ids[1], "tc-q2");
+
+    // First should be focused, second should not
+    let (mi1, bi1) = app.lookup_tool_call("tc-q1").expect("tc-q1 indexed");
+    if let MessageBlock::ToolCall(tc) = &app.transcript.messages[mi1].blocks[bi1] {
+        assert!(tc.pending_permission.as_ref().unwrap().focused);
+    }
+    let (mi2, bi2) = app.lookup_tool_call("tc-q2").expect("tc-q2 indexed");
+    if let MessageBlock::ToolCall(tc) = &app.transcript.messages[mi2].blocks[bi2] {
+        assert!(!tc.pending_permission.as_ref().unwrap().focused);
+    }
+}
+
+#[tokio::test]
+async fn duplicate_permission_request_is_rejected_without_duplicate_queue_entry() {
+    let mut app = test_app();
+    let mut first_rx = setup_permission(&mut app, "tc-dup", allow_deny_options());
+
+    let (response_tx, mut duplicate_rx) = oneshot::channel();
+    let tool_call_update = model::ToolCallUpdate::new("tc-dup", model::ToolCallUpdateFields::new());
+    let request = model::RequestPermissionRequest::new(
+        "test-session",
+        tool_call_update,
+        allow_deny_options(),
+        None,
+    );
+    send_client_event(&mut app, permission_request(request, response_tx));
+
+    assert_eq!(app.turn.pending_interaction_ids, vec!["tc-dup"]);
+    assert!(matches!(first_rx.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+
+    let resp = duplicate_rx.try_recv().expect("duplicate permission should be auto-rejected");
+    let model::RequestPermissionOutcome::Selected(selected) = resp.outcome else {
+        panic!("expected Selected outcome from duplicate auto-reject");
+    };
+    assert_eq!(selected.option_id.clone(), "deny");
+}
+
+// --- TurnComplete transient state reset ---
+
+#[tokio::test]
+async fn turn_complete_resets_transient_state() {
+    let mut app = test_app();
+    app.status = AppStatus::Running;
+    app.files_accessed = 5;
+    app.spinner_frame = 42;
+
+    send_client_event(&mut app, turn_complete());
+
+    assert!(matches!(app.status, AppStatus::Ready));
+    assert_eq!(app.files_accessed, 0, "files_accessed should reset");
+    // spinner_frame is a UI detail, not reset by TurnComplete (it's driven by tick)
+    // pending_interaction_ids should be empty (no permissions were pending)
+    assert!(app.turn.pending_interaction_ids.is_empty());
+}
+
+#[tokio::test]
+async fn turn_complete_does_not_clear_messages() {
+    let mut app = test_app();
+
+    let chunk =
+        model::ContentChunk::new(model::ContentBlock::Text(model::TextContent::new("hello")));
+    send_client_event(&mut app, session_update(model::SessionUpdate::AgentMessageChunk(chunk)));
+    assert_eq!(app.transcript.messages.len(), 1);
+
+    send_client_event(&mut app, turn_complete());
+
+    assert_eq!(app.transcript.messages.len(), 1, "messages should persist across turns");
+}
+
+#[tokio::test]
+async fn turn_complete_does_not_clear_tool_call_index() {
+    let mut app = test_app();
+
+    let tc =
+        model::ToolCall::new("tc-persist", "Read file").status(model::ToolCallStatus::InProgress);
+    send_client_event(&mut app, session_update(model::SessionUpdate::ToolCall(tc)));
+    assert!(app.has_tool_call("tc-persist"));
+
+    send_client_event(&mut app, turn_complete());
+
+    assert!(app.has_tool_call("tc-persist"), "tool_call_index should persist across turns");
+}
+
+#[tokio::test]
+async fn turn_complete_does_not_clear_tasks() {
+    let mut app = test_app();
+
+    app.sdk_inventory.tasks.push(task_item("task-1", "Test task", model::TaskStatus::InProgress));
+
+    send_client_event(&mut app, turn_complete());
+
+    assert_eq!(app.sdk_inventory.tasks.len(), 1, "tasks should persist across turns");
+}
+
+#[tokio::test]
+async fn turn_complete_does_not_affect_mode() {
+    let mut app = test_app();
+
+    app.session_runtime.mode = Some(atlascode_rs::app::ModeState {
+        current_mode_id: "plan".into(),
+        current_mode_name: "Plan".into(),
+        available_modes: vec![atlascode_rs::app::ModeInfo {
+            id: "plan".into(),
+            name: "Plan".into(),
+        }],
+    });
+
+    send_client_event(&mut app, turn_complete());
+
+    assert!(app.session_runtime.mode.is_some(), "mode should persist across turns");
+}

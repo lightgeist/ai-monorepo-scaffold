@@ -1,0 +1,73 @@
+{
+  "source_commit": "60a3929f5cfb5a529b39469000cf9444b58d63e9",
+  "source_tree": "906573f0518d808b5c0668fb3e349e372834070f",
+  "run": 37194909957,
+  "windows_run": 37195342387,
+  "files": [
+    {
+      "file": "SHA256SUMS",
+      "bytes": 710,
+      "sha256": "2bf1c4f6b3f79847db983d931e882e18c0bbe587f02ee1a709c556da4e648300"
+    },
+    {
+      "file": "VERIFICATION.json",
+      "bytes": 7755,
+      "sha256": "1d926b7feabca7827330550478e37d1e9702d1ae00f5ea9b3f553965ab690a78"
+    },
+    {
+      "file": "VERIFICATION.md",
+      "bytes": 4854,
+      "sha256": "56f45d8f88d5a89616677668f11e929fc5c9850093be84894503d61aac7d7d9d"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-darwin-arm64.tar.gz",
+      "bytes": 137161954,
+      "sha256": "16b9e18e3f72d4f12132d606cba7ba93bf51c9cc3724a47399cf41dc4ab6a301"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-darwin-x64.tar.gz",
+      "bytes": 145194057,
+      "sha256": "14e5d440b08797095f1358e225381e6e2094e5f1e9354bffabb7729a659ebe1e"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-evidence.zip",
+      "bytes": 2771504,
+      "sha256": "41148baf84a6eb93d3a612336362128780117952d5bc66eba1b2f773117298c2"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-linux-arm64-gnu.tar.gz",
+      "bytes": 159332564,
+      "sha256": "6da5100037feff569face22aea35b2ca88b96e9f20cced87e9e4e917a2cef783"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-linux-x64-gnu.tar.gz",
+      "bytes": 160090228,
+      "sha256": "6b274ef12109858d01ea9e27dbb48a9d1000292bd5b996597ffb7cfa46918eaf"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-source.tar.gz",
+      "bytes": 1293633,
+      "sha256": "4ccdba697c5ff77f1a19bae6be2974bebc528629cdd2ff74ca0fae26be6ebe3f"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-source.zip",
+      "bytes": 1510880,
+      "sha256": "db9d978a8b927d2a15077cf4ba05181f656e09bf124f7a68165f8b8fd119723c"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-win32-arm64-msvc.zip",
+      "bytes": 156600071,
+      "sha256": "0689ac61fe07a48c32ed356d3ee425e5048fdb1662d3c66e2b7cef029b6f3d6e"
+    },
+    {
+      "file": "atlascode-rs-0.1.0-win32-x64-msvc.zip",
+      "bytes": 164860118,
+      "sha256": "116b77b65f0f300df246231d38747d682ef50650dfa69562a8fa93d743f7a947"
+    },
+    {
+      "file": "CHECKSUMS.sha256",
+      "bytes": 1168,
+      "sha256": "b98be820654e9060b86c9726f072fac6b6a5d726a2ae4a71a223777ee5f26143"
+    }
+  ]
+}

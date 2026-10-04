@@ -1,0 +1,299 @@
+import type {
+  ApiRetryError,
+  FastModeState,
+  RateLimitStatus,
+  RuntimeSessionState,
+  SessionUpdate,
+  SettingsParseErrorUpdate,
+  SubagentRetryUpdate,
+} from "../types.js";
+import { asRecordOrNull } from "./shared.js";
+
+export function numberField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export function nonNegativeNumberField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  const value = numberField(record, ...keys);
+  if (value === undefined || value < 0) {
+    return undefined;
+  }
+  return value;
+}
+
+export function nonNegativeIntegerField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  const value = numberField(record, ...keys);
+  return value !== undefined && value >= 0 && Number.isInteger(value)
+    ? value
+    : undefined;
+}
+
+export function buildSubagentRetryUpdate(
+  message: Record<string, unknown>,
+): SubagentRetryUpdate | null {
+  const retry = asRecordOrNull(message.subagent_retry);
+  if (!retry) {
+    return null;
+  }
+  const attempt = nonNegativeIntegerField(retry, "attempt");
+  const maxRetries = nonNegativeIntegerField(
+    retry,
+    "max_retries",
+    "maxRetries",
+  );
+  const retryDelayMs = nonNegativeIntegerField(
+    retry,
+    "retry_delay_ms",
+    "retryDelayMs",
+  );
+  if (
+    attempt === undefined ||
+    maxRetries === undefined ||
+    retryDelayMs === undefined
+  ) {
+    return null;
+  }
+
+  const agentId =
+    typeof retry.agent_id === "string" ? retry.agent_id.trim() : "";
+  const errorCategory =
+    typeof retry.error_category === "string" ? retry.error_category.trim() : "";
+  const errorStatus = nonNegativeIntegerField(
+    retry,
+    "error_status",
+    "errorStatus",
+  );
+  return {
+    state: "waiting",
+    ...(agentId ? { agent_id: agentId } : {}),
+    attempt,
+    max_retries: maxRetries,
+    retry_delay_ms: retryDelayMs,
+    ...(errorStatus !== undefined ? { error_status: errorStatus } : {}),
+    ...(errorCategory ? { error_category: errorCategory } : {}),
+  };
+}
+
+export function parseFastModeState(value: unknown): FastModeState | null {
+  if (value === "off" || value === "cooldown" || value === "on") {
+    return value;
+  }
+  return null;
+}
+
+export function parseFastModeDisabledReason(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const reason = value.trim();
+  return reason.length > 0 ? reason : undefined;
+}
+
+export function parseRateLimitStatus(value: unknown): RateLimitStatus | null {
+  if (
+    value === "allowed" ||
+    value === "allowed_warning" ||
+    value === "rejected"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+export function parseRuntimeSessionState(
+  value: unknown,
+): RuntimeSessionState | null {
+  if (value === "idle" || value === "running" || value === "requires_action") {
+    return value;
+  }
+  return null;
+}
+
+export function parseApiRetryError(value: unknown): ApiRetryError {
+  switch (value) {
+    case "authentication_failed":
+    case "account_on_hold":
+    case "oauth_org_not_allowed":
+    case "billing_error":
+    case "rate_limit":
+    case "overloaded":
+    case "invalid_request":
+    case "model_not_found":
+    case "server_error":
+    case "verification_required":
+    case "cloud_credential_error":
+    case "max_output_tokens":
+      return value;
+    default:
+      return "unknown";
+  }
+}
+
+export function buildRateLimitUpdate(
+  rateLimitInfo: unknown,
+): Extract<SessionUpdate, { type: "rate_limit_update" }> | null {
+  const info = asRecordOrNull(rateLimitInfo);
+  if (!info) {
+    return null;
+  }
+
+  const status = parseRateLimitStatus(info.status);
+  if (!status) {
+    return null;
+  }
+
+  const update: Extract<SessionUpdate, { type: "rate_limit_update" }> = {
+    type: "rate_limit_update",
+    status,
+  };
+
+  if (info.errorCode === "credits_required") {
+    update.error_code = "credits_required";
+  }
+
+  const resetsAt = numberField(info, "resetsAt");
+  if (resetsAt !== undefined) {
+    update.resets_at = resetsAt;
+  }
+
+  const utilization = numberField(info, "utilization");
+  if (utilization !== undefined) {
+    update.utilization = utilization;
+  }
+
+  if (typeof info.rateLimitType === "string" && info.rateLimitType.length > 0) {
+    update.rate_limit_type = info.rateLimitType;
+  }
+
+  if (
+    info.limitScope === "service" ||
+    info.limitScope === "channel" ||
+    info.limitScope === "group_pool"
+  ) {
+    update.limit_scope = info.limitScope;
+  }
+
+  const overageStatus = parseRateLimitStatus(info.overageStatus);
+  if (overageStatus) {
+    update.overage_status = overageStatus;
+  }
+
+  const overageResetsAt = numberField(info, "overageResetsAt");
+  if (overageResetsAt !== undefined) {
+    update.overage_resets_at = overageResetsAt;
+  }
+
+  if (
+    typeof info.overageDisabledReason === "string" &&
+    info.overageDisabledReason.length > 0
+  ) {
+    update.overage_disabled_reason = info.overageDisabledReason;
+  }
+
+  if (typeof info.overageInUse === "boolean") {
+    update.is_using_overage = info.overageInUse;
+  } else if (typeof info.isUsingOverage === "boolean") {
+    update.is_using_overage = info.isUsingOverage;
+  }
+
+  const surpassedThreshold = numberField(info, "surpassedThreshold");
+  if (surpassedThreshold !== undefined) {
+    update.surpassed_threshold = surpassedThreshold;
+  }
+
+  if (typeof info.canUserPurchaseCredits === "boolean") {
+    update.can_user_purchase_credits = info.canUserPurchaseCredits;
+  }
+
+  if (typeof info.hasChargeableSavedPaymentMethod === "boolean") {
+    update.has_chargeable_saved_payment_method =
+      info.hasChargeableSavedPaymentMethod;
+  }
+
+  return update;
+}
+
+export function buildApiRetryUpdate(
+  message: Record<string, unknown>,
+): Extract<SessionUpdate, { type: "api_retry_update" }> | null {
+  const attempt = numberField(message, "attempt");
+  const maxRetries = numberField(message, "max_retries", "maxRetries");
+  const retryDelayMs = nonNegativeNumberField(
+    message,
+    "retry_delay_ms",
+    "retryDelayMs",
+  );
+  if (
+    attempt === undefined ||
+    maxRetries === undefined ||
+    retryDelayMs === undefined
+  ) {
+    return null;
+  }
+
+  const rawStatus = message.error_status ?? message.errorStatus;
+  const errorStatus =
+    typeof rawStatus === "number" && Number.isFinite(rawStatus)
+      ? rawStatus
+      : null;
+
+  return {
+    type: "api_retry_update",
+    attempt,
+    max_retries: maxRetries,
+    retry_delay_ms: retryDelayMs,
+    error_status: errorStatus,
+    error: parseApiRetryError(message.error),
+  };
+}
+
+export function normalizeSettingsParseError(
+  value: unknown,
+): SettingsParseErrorUpdate | null {
+  const record = asRecordOrNull(value);
+  if (!record) {
+    return null;
+  }
+  const message =
+    typeof record.message === "string" ? record.message.trim() : "";
+  if (!message) {
+    return null;
+  }
+  const path = typeof record.path === "string" ? record.path : "";
+  const file =
+    typeof record.file === "string" && record.file.trim()
+      ? record.file
+      : undefined;
+  return {
+    ...(file ? { file } : {}),
+    path,
+    message,
+  };
+}
+
+export function normalizeSettingsParseErrors(
+  value: unknown,
+): SettingsParseErrorUpdate[] {
+  const entries = Array.isArray(value) ? value : [value];
+  return entries.flatMap((entry) => {
+    const normalized = normalizeSettingsParseError(entry);
+    return normalized ? [normalized] : [];
+  });
+}
