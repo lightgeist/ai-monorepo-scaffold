@@ -14,14 +14,14 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: atlascode-rs-prepared
-          run-id: 37163612741
+          run-id: 37164321262
           github-token: ${{ github.token }}
           path: input
       - name: Pin audited source and capture dependency graph
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat input/evidence/builder-commit.txt)" = e3fb963df698568c72384b6757c4684eaba6719e
+          test "$(cat input/evidence/builder-commit.txt)" = ad215cbd414044c797413d93df8188dca48541c0
           tar -xzf input/source.tar.gz
           mkdir audit-evidence
           cp input/evidence/source-tree.txt audit-evidence/audited-source-tree.txt
@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p audit-evidence
-          printf '%s\n' 'Cargo deny action outcome: ${{ steps.deny.outcome }}' 'Audited builder commit: e3fb963df698568c72384b6757c4684eaba6719e' 'Audit run: ${{ github.run_id }}' 'Dependency graph hashes are checked by the brand audit.' > audit-evidence/AUDIT-SCOPE.txt
+          printf '%s\n' 'Cargo deny action outcome: ${{ steps.deny.outcome }}' 'Audited builder commit: ad215cbd414044c797413d93df8188dca48541c0' 'Audit run: ${{ github.run_id }}' 'Dependency graph hashes are checked by the brand audit.' > audit-evidence/AUDIT-SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
