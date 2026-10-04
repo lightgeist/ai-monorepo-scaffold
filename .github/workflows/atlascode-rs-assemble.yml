@@ -20,20 +20,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest -v test_verify_archives.py 2>&1 | tee ../../../assembly-tests.log
+          python3 -m unittest -v test_verify_archives.py 2>&1 | tee ../../assembly-tests.log
       - name: Require completed native qualification and final-source dependency audit
         shell: bash
         run: |
           set -euo pipefail
-          gh run watch 37164321262 --repo "$GH_REPO" --exit-status --interval 30
-          gh run watch 37164474484 --repo "$GH_REPO" --exit-status --interval 30
+          gh run watch 37165447408 --repo "$GH_REPO" --exit-status --interval 30
+          gh run watch 37165477151 --repo "$GH_REPO" --exit-status --interval 30
       - name: Independently verify and assemble unchanged source and native assets
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/atlascode-rs-release/assemble.py \
-            --run 37164321262 --builder ad215cbd414044c797413d93df8188dca48541c0 \
-            --audit-run 37164474484 --audit-builder e83c152d1bfde4b62ef83b523e6f904a39a4e46f \
+            --run 37165447408 --builder 0818f97220cfa359ec08b3fcddf3dc9545ab8992 \
+            --audit-run 37165477151 --audit-builder 19e337ae26e2966c253f4b3febaea3e72a0342d9 \
             --output release-stage 2>&1 | tee assembly.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
