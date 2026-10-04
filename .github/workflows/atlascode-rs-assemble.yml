@@ -1,0 +1,56 @@
+name: atlascode-rs verified release assembly
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-assemble.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: lightgeist/ai-monorepo-scaffold
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Independent auditor regression tests
+        working-directory: tools/atlascode-rs-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v test_verify_archives.py 2>&1 | tee ../../../assembly-tests.log
+      - name: Require completed native qualification and final-source dependency audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run watch 37164321262 --repo "$GH_REPO" --exit-status --interval 30
+          gh run watch 37164474484 --repo "$GH_REPO" --exit-status --interval 30
+      - name: Independently verify and assemble unchanged source and native assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/atlascode-rs-release/assemble.py \
+            --run 37164321262 --builder ad215cbd414044c797413d93df8188dca48541c0 \
+            --audit-run 37164474484 --audit-builder e83c152d1bfde4b62ef83b523e6f904a39a4e46f \
+            --output release-stage 2>&1 | tee assembly.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-final-verification
+          path: |
+            assembly-tests.log
+            assembly.log
+            release-stage/asset-manifest.json
+            release-stage/evidence/
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-release-payload
+          path: |
+            release-stage/assets/
+            release-stage/asset-manifest.json
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
