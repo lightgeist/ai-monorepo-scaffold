@@ -1,0 +1,30 @@
+name: atlascode-rs linter isolation diagnosis
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-knip-diagnose.yml']
+permissions: {contents: read, actions: read}
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-prepared
+          run-id: 37164321262
+          github-token: ${{ github.token }}
+          path: input
+      - run: tar -xzf input/source.tar.gz
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24.21.0'}
+      - name: Run isolated locked linter with bounded error output
+        working-directory: atlascode-rs/agent-sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../../diagnosis
+          npm ci > ../../diagnosis/install.log 2>&1
+          node --input-type=module -e 'process.argv=["node","knip","--include","files,dependencies,unlisted,unresolved"]; try { await import("./node_modules/knip/bin/knip.js"); } catch (error) { console.error(error.stack); process.exit(1); }' 2>&1 | tee ../../diagnosis/knip.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: atlascode-rs-linter-diagnosis, path: diagnosis/}
