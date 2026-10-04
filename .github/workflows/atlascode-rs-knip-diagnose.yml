@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           mkdir -p ../../diagnosis
           npm ci > ../../diagnosis/install.log 2>&1
-          node --input-type=module -e 'process.argv=["node","knip","--include","files,dependencies,unlisted,unresolved"]; try { await import("./node_modules/knip/bin/knip.js"); } catch (error) { console.error(error.stack); process.exit(1); }' 2>&1 | tee ../../diagnosis/knip.log
+          node --input-type=module -e 'process.argv=["node","--include","files,dependencies,unlisted,unresolved"]; try { await import("./node_modules/knip/bin/knip.js"); } catch (error) { console.error(JSON.stringify({message:error.message,stack:error.stack,code:error.code})); process.exit(1); }' 2>&1 | tee ../../diagnosis/knip.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with: {name: atlascode-rs-linter-diagnosis, path: diagnosis/}
