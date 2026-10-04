@@ -72,6 +72,7 @@ jobs:
           cp source/NATIVE-INPUTS.json final/evidence/
           cp -r native/evidence final/evidence/native
           cp -r audit final/evidence/dependency-audit
+          sha256sum native/dist-platform/*/bin/* > final/evidence/native-binary-sha256.txt
           mv native/dist-platform source/dist-platform
           find source/dist-platform -type f ! -name '*.exe' -exec chmod +x {} +
       - name: Locked bridge, installer and package checks
@@ -83,7 +84,10 @@ jobs:
           npm ci --prefix agent-sdk 2>&1 | tee ../final/evidence/bridge-install.log
           npm --prefix agent-sdk test 2>&1 | tee ../final/evidence/bridge-tests.log
           npm --prefix agent-sdk run lint 2>&1 | tee ../final/evidence/bridge-lint.log
-          npm --prefix agent-sdk run knip 2>&1 | tee ../final/evidence/bridge-knip.log
+          isolated=$(mktemp -d)
+          cp -a agent-sdk "$isolated/agent-sdk"
+          (cd "$isolated/agent-sdk" && npm run knip) 2>&1 | tee ../final/evidence/bridge-knip.log
+          rm -rf "$isolated"
           npm --prefix agent-sdk run audit 2>&1 | tee ../final/evidence/bridge-audit.log
           node scripts/shared/verify-third-party-notices.mjs | tee ../final/evidence/notices.log
           node --test scripts/npm/npm-resolver.test.cjs scripts/npm/smoke-npm-package-install.test.mjs scripts/runtime/verify-staged-bun-runtimes.test.mjs scripts/npm/dry-run-npm-publish.test.mjs scripts/npm/publish-npm-platform-packages.test.mjs scripts/shared/deny-targets.test.mjs scripts/install/release-advisories.test.mjs scripts/install/install-version-guard.test.mjs 2>&1 | tee ../final/evidence/node-core-tests.log
@@ -113,6 +117,7 @@ jobs:
           path: final/evidence/
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: atlascode-rs-finish-source
           path: |
