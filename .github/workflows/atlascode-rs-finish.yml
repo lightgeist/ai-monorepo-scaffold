@@ -1,0 +1,175 @@
+name: atlascode-rs final portable delivery
+on:
+  push:
+    branches: ['atlascode-rs/rebrand-20261004']
+    paths: ['.github/workflows/atlascode-rs-finish.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-prepared
+          run-id: 37164321262
+          github-token: ${{ github.token }}
+          path: input
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: atlascode-rs-native-*
+          run-id: 37164321262
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: native
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-dependency-audit
+          run-id: 37164474484
+          github-token: ${{ github.token }}
+          path: audit
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.21.0'
+      - name: Validate successful native steps and repair only the installer layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p final/evidence
+          gh api 'repos/lightgeist/ai-monorepo-scaffold/actions/runs/37164321262/jobs?per_page=100' > final/evidence/native-jobs.json
+          gh api 'repos/lightgeist/ai-monorepo-scaffold/actions/runs/37164474484' > final/evidence/dependency-audit-run.json
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('final/evidence')
+          jobs=[j for j in json.loads((root/'native-jobs.json').read_text())['jobs'] if j['name'].startswith('native (')]
+          assert len(jobs)==6
+          for j in jobs:
+              for name in ['Native toolchain and complete bridge suite','Native Rust and real PTY regression suite','Build and stage native release']:
+                  assert next(s for s in j['steps'] if s['name']==name)['conclusion']=='success',(j['name'],name)
+          audit=json.loads((root/'dependency-audit-run.json').read_text())
+          assert audit['conclusion']=='success' and audit['head_sha']=='e83c152d1bfde4b62ef83b523e6f904a39a4e46f'
+          assert pathlib.Path('audit/audited-source-tree.txt').read_text().strip()=='80ab19b77a911cf0b89d97c36c9e2550b54c8ce4'
+          PY
+          git clone input/atlascode-rs-history.bundle source
+          git -C source checkout --detach 8a8a073ee47dc3155e43991a409b7d46a76a9d3c
+          test "$(git -C source rev-parse HEAD^{tree})" = 80ab19b77a911cf0b89d97c36c9e2550b54c8ce4
+          python3 tools/atlascode-rs-release/finish-installers.py source | tee final/evidence/installer-repairs.log
+          cp tools/atlascode-rs-release/finish-installers.py source/tools/rebrand-finish-installers.py
+          python3 source/tools/rebrand-refine.py source --finalize | tee final/evidence/ledger.log
+          python3 source/tools/verify-brand.py | tee final/evidence/brand-audit.json
+          git -C source add -A
+          git -C source -c user.name='atlascode-rs release' -c user.email='atlascode-rs-release@users.noreply.github.com' commit -m 'fix(atlascode-rs): final installer cancellation and namespaced release fixtures'
+          git -C source rev-parse HEAD > final/evidence/source-commit.txt
+          git -C source rev-parse HEAD^{tree} > final/evidence/source-tree.txt
+          git -C source archive --format=tar.gz --prefix=atlascode-rs/ HEAD > final/source.tar.gz
+          git -C source archive --format=zip --prefix=atlascode-rs/ --output="$PWD/final/atlascode-rs-0.1.0-source.zip" HEAD
+          git -C source bundle create "$PWD/final/source-history.bundle" --all
+          cp source/NATIVE-INPUTS.json final/evidence/
+          cp -r native/evidence final/evidence/native
+          cp -r audit final/evidence/dependency-audit
+          mv native/dist-platform source/dist-platform
+          find source/dist-platform -type f ! -name '*.exe' -exec chmod +x {} +
+      - name: Locked bridge, installer and package checks
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci 2>&1 | tee ../final/evidence/root-install.log
+          npm ci --prefix agent-sdk 2>&1 | tee ../final/evidence/bridge-install.log
+          npm --prefix agent-sdk test 2>&1 | tee ../final/evidence/bridge-tests.log
+          npm --prefix agent-sdk run lint 2>&1 | tee ../final/evidence/bridge-lint.log
+          npm --prefix agent-sdk run knip 2>&1 | tee ../final/evidence/bridge-knip.log
+          npm --prefix agent-sdk run audit 2>&1 | tee ../final/evidence/bridge-audit.log
+          node scripts/shared/verify-third-party-notices.mjs | tee ../final/evidence/notices.log
+          node --test scripts/npm/npm-resolver.test.cjs scripts/npm/smoke-npm-package-install.test.mjs scripts/runtime/verify-staged-bun-runtimes.test.mjs scripts/npm/dry-run-npm-publish.test.mjs scripts/npm/publish-npm-platform-packages.test.mjs scripts/shared/deny-targets.test.mjs scripts/install/release-advisories.test.mjs scripts/install/install-version-guard.test.mjs 2>&1 | tee ../final/evidence/node-core-tests.log
+          for attempt in $(seq 1 10); do node --test scripts/install/install-path.test.mjs > ../final/evidence/install-path-$attempt.log 2>&1; done
+          node scripts/runtime/verify-staged-bun-runtimes.mjs --dist-platform dist-platform | tee ../final/evidence/staged-runtime-verify.log
+          node scripts/npm/generate-npm-packages.mjs 2>&1 | tee ../final/evidence/npm-generate.log
+          node scripts/npm/verify-npm-packages.mjs 2>&1 | tee ../final/evidence/npm-verify.log
+          node scripts/npm/smoke-npm-package-install.mjs --real-binary --no-system-runtime 2>&1 | tee ../final/evidence/npm-smoke.log
+          node scripts/install/generate-install-archives.mjs 2>&1 | tee ../final/evidence/archive-generate.log
+          node scripts/install/verify-install-archives.mjs 2>&1 | tee ../final/evidence/archive-verify.log
+          node --test scripts/install/install-progress.test.mjs 2>&1 | tee ../final/evidence/install-progress-tests.log
+          cp -r dist-install/manifests ../final/evidence/install-manifests
+          mkdir -p ../final/assets
+          cp dist-install/*.tar.gz dist-install/*.zip ../final/assets/
+          cp ../final/atlascode-rs-0.1.0-source.zip ../final/assets/
+          cp ../final/source.tar.gz ../final/assets/atlascode-rs-0.1.0-source.tar.gz
+          sha256sum dist-install/*.tar.gz dist-install/*.zip > ../final/assets/SHA256SUMS
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-finish-evidence
+          path: final/evidence/
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-finish-source
+          path: |
+            final/source.tar.gz
+            final/source-history.bundle
+            final/evidence/source-commit.txt
+            final/evidence/source-tree.txt
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: atlascode-rs-finish-assets
+          path: final/assets/
+          compression-level: 0
+          retention-days: 30
+  smoke:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-latest, platform: linux-x64-gnu}
+          - {runner: ubuntu-24.04-arm, platform: linux-arm64-gnu}
+          - {runner: macos-15-intel, platform: darwin-x64}
+          - {runner: macos-15, platform: darwin-arm64}
+          - {runner: windows-latest, platform: win32-x64-msvc}
+          - {runner: windows-11-arm, platform: win32-arm64-msvc}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-finish-source
+          path: input
+      - shell: bash
+        run: tar -xzf input/source.tar.gz
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: atlascode-rs-finish-assets
+          path: atlascode-rs/dist-install
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.21.0'
+      - name: Real portable runtime and failure controls
+        working-directory: atlascode-rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../smoke-evidence/${{ matrix.platform }}
+          node scripts/install/smoke-install-archive.mjs --platform ${{ matrix.platform }} --real-binary --no-system-runtime 2>&1 | tee ../smoke-evidence/${{ matrix.platform }}/archive-smoke.log
+      - name: Windows installer ownership and version-guard regression
+        if: runner.os == 'Windows'
+        working-directory: atlascode-rs
+        shell: pwsh
+        run: |
+          & ./scripts/install/test-install-path.ps1 2>&1 | Tee-Object ../smoke-evidence/${{ matrix.platform }}/install-path.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./scripts/install/test-install-version-guard.ps1 2>&1 | Tee-Object ../smoke-evidence/${{ matrix.platform }}/install-version.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atlascode-rs-finish-smoke-${{ matrix.platform }}
+          path: smoke-evidence/
+          retention-days: 30
